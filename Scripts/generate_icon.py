@@ -1,5 +1,6 @@
 import os
 import sys
+import glob
 from PIL import Image
 
 def process_app_icon():
@@ -7,11 +8,19 @@ def process_app_icon():
     out_path = os.path.join(out_dir, "icon-1024.png")
     os.makedirs(out_dir, exist_ok=True)
 
-    # 1. 查找用户上传的图片文件（按优先级）
+    # 1. 查找用户上传的图片文件（优先支持 Scripts/IMG_1783.jpeg 各种常见命名）
     candidates = [
+        "Scripts/IMG_1783.jpeg",
+        "Scripts/IMG_1783.jpg",
         "Scripts/IMG_1783.png",
+        "Scripts/icon.jpeg",
+        "Scripts/icon.jpg",
         "Scripts/icon.png",
+        "Scripts/custom_icon.jpeg",
+        "Scripts/custom_icon.jpg",
         "Scripts/custom_icon.png",
+        "Scripts/app_icon.jpeg",
+        "Scripts/app_icon.jpg",
         "Scripts/app_icon.png"
     ]
 
@@ -20,6 +29,15 @@ def process_app_icon():
         if os.path.exists(p) and os.path.getsize(p) > 1000:
             source_path = p
             break
+
+    # 如果特定名称未命中，自动检索 Scripts 目录下所有图片
+    if not source_path and os.path.exists("Scripts"):
+        for ext in ("*.jpeg", "*.jpg", "*.png", "*.webp", "*.JPEG", "*.JPG", "*.PNG"):
+            matches = glob.glob(os.path.join("Scripts", ext))
+            valid = [m for m in matches if os.path.getsize(m) > 1000]
+            if valid:
+                source_path = valid[0]
+                break
 
     if not source_path:
         print("未在 Scripts/ 目录下检测到用户自定义图片，保持现有图标。")
@@ -42,39 +60,52 @@ def process_app_icon():
 
     w, h = img.size
 
-    # 3. 智能检测四角外框与圆角展示背景
-    c_tl = img.getpixel((0, 0))
-    c_tr = img.getpixel((w - 1, 0))
-    c_bl = img.getpixel((0, h - 1))
-    c_br = img.getpixel((w - 1, h - 1))
-
-    e_top = img.getpixel((w // 2, 0))
-    e_bottom = img.getpixel((w // 2, h - 1))
-    e_left = img.getpixel((0, h // 2))
-    e_right = img.getpixel((w - 1, h // 2))
-
-    corner_lum = sum(sum(c) for c in [c_tl, c_tr, c_bl, c_br]) / 12.0
-    edge_lum = sum(sum(e) for e in [e_top, e_bottom, e_left, e_right]) / 12.0
-
-    print(f"角点平均亮度: {corner_lum:.1f}, 边缘平均亮度: {edge_lum:.1f}")
-
-    # 如果角点明显暗于内部（差值 > 6），说明外部有灰框背景
-    # 智能裁切掉外部展示卡片的浅灰留白（约 4.5%），使白色底板完美延伸到边缘，让 iOS 系统原生圆角裁剪最自然
-    if corner_lum < 250 and edge_lum >= 250 and (edge_lum - corner_lum) > 6:
-        margin = int(min(w, h) * 0.046)
-        print(f"检测到展示画框外围浅灰底色，智能裁切外圈 {margin}px 消除多余画框与双重圆角...")
-        img = img.crop((margin, margin, w - margin, h - margin))
-    elif abs(w - h) > 0:
-        # 正方形裁切
+    # 3. 确保为正方形裁切
+    if w != h:
         dim = min(w, h)
         l = (w - dim) // 2
         t = (h - dim) // 2
         img = img.crop((l, t, l + dim, t + dim))
+        w = h = dim
 
-    # 4. 高保真 LANCZOS 重采样至 iOS 标准 1024x1024
+    # 4. 智能检测四角外框与自带圆角展示背景
+    corners = [
+        img.getpixel((0, 0)),
+        img.getpixel((w - 1, 0)),
+        img.getpixel((0, h - 1)),
+        img.getpixel((w - 1, h - 1)),
+        img.getpixel((2, 2)),
+        img.getpixel((w - 3, 2)),
+        img.getpixel((2, h - 3)),
+        img.getpixel((w - 3, h - 3)),
+    ]
+    corner_lum = sum(sum(c) for c in corners) / (len(corners) * 3.0)
+
+    inner_samples = [
+        img.getpixel((int(w * 0.15), int(h * 0.15))),
+        img.getpixel((int(w * 0.85), int(h * 0.15))),
+        img.getpixel((int(w * 0.15), int(h * 0.85))),
+        img.getpixel((int(w * 0.85), int(h * 0.85)))
+    ]
+    inner_lum = sum(sum(c) for c in inner_samples) / (len(inner_samples) * 3.0)
+
+    print(f"角点平均亮度: {corner_lum:.1f}, 内部卡片平均亮度: {inner_lum:.1f}")
+
+    # 如果角点暗于内部（用户上传了带展示灰底的卡片图），裁切掉多余的灰框与双重圆角
+    # 让纯白底板完全铺满 1024x1024，交给 iOS 官方系统去裁剪出标准 Squircle 圆角
+    if corner_lum < 250 and inner_lum >= 245:
+        margin = int(w * 0.055)
+        print(f"检测到外部展示底色与卡片自带圆角，智能裁切四周各 {margin}px ({margin/w*100:.1f}%)...")
+        img = img.crop((margin, margin, w - margin, h - margin))
+    elif corner_lum < 240:
+        margin = int(w * 0.05)
+        print(f"检测到边角杂色，裁切四周 {margin}px...")
+        img = img.crop((margin, margin, w - margin, h - margin))
+
+    # 5. 高保真 LANCZOS 重采样至 iOS 标准 1024x1024
     final_icon = img.resize((1024, 1024), Image.Resampling.LANCZOS)
 
-    # 5. 保存
+    # 6. 保存
     final_icon.save(out_path, "PNG", optimize=True)
     size_bytes = os.path.getsize(out_path)
     print(f"✅ 官方 App 图标转换完成: {out_path} ({size_bytes} 字节)")
