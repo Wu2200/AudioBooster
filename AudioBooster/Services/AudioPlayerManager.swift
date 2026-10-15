@@ -50,6 +50,7 @@ final class AudioPlayerManager: ObservableObject {
 
     deinit {
         removeObservers()
+        timeControlStatusObserver?.invalidate()
     }
 
     // MARK: - 标题规范化（保留原始标题，不屏蔽 TRACK 等前缀）
