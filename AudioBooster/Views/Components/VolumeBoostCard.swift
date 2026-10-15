@@ -74,15 +74,6 @@ struct VolumeBoostCard: View {
                 Slider(value: $playerManager.boostMultiplier, in: 1.0...4.0, step: 0.1)
                     .accentColor(badgeColor)
             }
-
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                    .font(.caption)
-                Text("增益突破已突破系统最大限制。3x / 4x 模式下请适度使用，避免耳机损伤听力。")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
         }
         .padding(16)
         .background(Color(UIColor.secondarySystemGroupedBackground))
