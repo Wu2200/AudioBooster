@@ -107,12 +107,8 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
-    // MARK: - 加载并播放 (全异步非阻塞)
-    func loadAndPlay(urlString: String, title: String? = nil, initialBoost: Float? = nil) {
-        loadAndPlay(urlString: urlString, multiplier: initialBoost, title: title)
-    }
-
-    func loadAndPlay(urlString: String, multiplier: Float? = nil, title: String? = nil) {
+    // MARK: - 加载并播放 (全异步非阻塞，统一单签名杜绝重载歧义)
+    func loadAndPlay(urlString: String, multiplier: Float? = nil, title: String? = nil, initialBoost: Float? = nil) {
         let cleaned = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: cleaned) else {
             DispatchQueue.main.async {
@@ -129,6 +125,8 @@ final class AudioPlayerManager: ObservableObject {
             resolvedTitle = AudioPlayerManager.cleanTitle(raw: url.lastPathComponent)
         }
 
+        let targetMultiplier = multiplier ?? initialBoost
+
         DispatchQueue.main.async {
             self.errorMessage = nil
             self.isBuffering = true
@@ -138,8 +136,8 @@ final class AudioPlayerManager: ObservableObject {
             self.duration = 0.0
             self.bufferedTime = 0.0
 
-            if let targetMultiplier = multiplier {
-                self.boostMultiplier = targetMultiplier
+            if let targetMult = targetMultiplier {
+                self.boostMultiplier = targetMult
             }
         }
 
@@ -406,10 +404,6 @@ final class AudioPlayerManager: ObservableObject {
                 completion?()
             }
         }
-    }
-
-    func skip(by seconds: Double) {
-        skip(seconds: seconds)
     }
 
     func skip(seconds: Double) {
