@@ -124,6 +124,9 @@ final class AudioPlayerManager: ObservableObject {
 
         notifyUser(message: "正在载入: \(self.currentTitle)")
 
+        // 显式激活全局主音频会话，确立系统最高播放优先级
+        try? AVAudioSession.sharedInstance().setActive(true)
+
         // 异步后台构建 AVURLAsset，并注入标准浏览器请求头和自适应 Referer 绕过防盗链拦截
         let targetURLString = cleanURLString
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
