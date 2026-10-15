@@ -46,7 +46,12 @@ final class AudioPlayerManager: ObservableObject {
         }
 
         self.currentURLString = urlString
-        self.currentTitle = title ?? url.lastPathComponent.isEmpty ? "网络音频" : url.lastPathComponent
+        if let title = title, !title.isEmpty {
+            self.currentTitle = title
+        } else {
+            let lastComp = url.lastPathComponent
+            self.currentTitle = lastComp.isEmpty ? "网络音频" : lastComp
+        }
         if let boost = initialBoost {
             self.boostMultiplier = max(1.0, min(boost, 4.0))
         }
