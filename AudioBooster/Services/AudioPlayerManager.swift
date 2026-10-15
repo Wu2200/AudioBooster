@@ -80,12 +80,22 @@ final class AudioPlayerManager: ObservableObject {
         return s.isEmpty ? "网络音频" : s
     }
 
-    // MARK: - 播放控制 (100% 异步非阻塞，彻底根除 UI 冻结)
+    // MARK: - 播放控制 (100% 异步非阻塞，杜绝二次编码与防盗链拦截)
 
     func loadAndPlay(urlString: String, title: String? = nil, initialBoost: Float? = nil) {
         let cleanURLString = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let encodedURLString = cleanURLString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? URL(string: cleanURLString)?.absoluteString,
-              let url = URL(string: encodedURLString) else {
+        guard !cleanURLString.isEmpty else { return }
+
+        // 优先直接构造原生 URL，严禁随意二次编码破坏原参数中的 % 或签名
+        var targetURL: URL? = URL(string: cleanURLString)
+        if targetURL == nil {
+            // 仅当含有中文或空格导致原生构造失败时，才进行安全转义补救
+            if let encoded = cleanURLString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
+                targetURL = URL(string: encoded)
+            }
+        }
+
+        guard let url = targetURL else {
             self.errorMessage = "无效的音频链接"
             return
         }
@@ -113,10 +123,19 @@ final class AudioPlayerManager: ObservableObject {
 
         notifyUser(message: "正在载入: \(self.currentTitle)")
 
-        // 异步后台构建 AVURLAsset，绝不在主线程进行任何网络或 I/O 操作
+        // 异步后台构建 AVURLAsset，并注入标准浏览器请求头和自适应 Referer 绕过防盗链拦截
         let targetURLString = cleanURLString
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let asset = AVURLAsset(url: url)
+            var headers: [String: String] = [
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+                "Accept": "*/*",
+                "Accept-Encoding": "identity"
+            ]
+            if let host = url.host {
+                headers["Referer"] = "\(url.scheme ?? "https")://\(host)/"
+            }
+
+            let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
             let item = AVPlayerItem(asset: asset)
 
             DispatchQueue.main.async {
