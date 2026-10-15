@@ -3,30 +3,37 @@ import SwiftUI
 struct PlayerControlView: View {
     @ObservedObject var playerManager: AudioPlayerManager
     @State private var isDragging: Bool = false
-    @State private var dragTime: Double = 0
+    @State private var dragProgress: Double? = nil
 
     var body: some View {
         VStack(spacing: 16) {
-            // 自定义进度条：支持预载(缓冲)进度条显示 + 单击跳转 + 顺畅拖拽滑动
+            // 自定义进度条：深灰高对比预载条 + 平滑无闪烁单击与滑动
             VStack(spacing: 8) {
                 GeometryReader { geometry in
                     let width = geometry.size.width
                     let totalDuration = max(1.0, playerManager.duration)
-                    let currentProgress = (isDragging ? dragTime : playerManager.currentTime) / totalDuration
+
+                    // 优先使用拖拽/单击的目标位置，杜绝底层异步 seek 造成的原点闪回
+                    let currentProgress: Double = {
+                        if let drag = dragProgress {
+                            return drag
+                        }
+                        return playerManager.currentTime / totalDuration
+                    }()
                     let bufferProgress = playerManager.bufferedTime / totalDuration
 
-                    let clampedCurrent = max(0, min(currentProgress, 1.0))
-                    let clampedBuffer = max(0, min(bufferProgress, 1.0))
+                    let clampedCurrent = max(0.0, min(currentProgress, 1.0))
+                    let clampedBuffer = max(0.0, min(bufferProgress, 1.0))
 
                     ZStack(alignment: .leading) {
-                        // 1. 底层槽位轨道
+                        // 1. 底层浅灰槽位轨道
                         Capsule()
                             .fill(Color(UIColor.systemGray5))
                             .frame(height: 6)
 
-                        // 2. 预载 / 缓冲进度条 (浅蓝半透明区别显示)
+                        // 2. 预载 / 缓冲进度条 (深灰色，高对比清晰可见)
                         Capsule()
-                            .fill(Color.blue.opacity(0.35))
+                            .fill(Color(UIColor.systemGray2))
                             .frame(width: max(0, width * CGFloat(clampedBuffer)), height: 6)
 
                         // 3. 当前播放进度条 (亮蓝高亮)
@@ -38,7 +45,7 @@ struct PlayerControlView: View {
                         Circle()
                             .fill(Color.white)
                             .frame(width: isDragging ? 18 : 14, height: isDragging ? 18 : 14)
-                            .shadow(color: Color.black.opacity(0.18), radius: 3, x: 0, y: 1)
+                            .shadow(color: Color.black.opacity(0.22), radius: 3, x: 0, y: 1)
                             .offset(x: max(0, min(width - (isDragging ? 18 : 14), width * CGFloat(clampedCurrent) - (isDragging ? 9 : 7))))
                     }
                     .frame(height: 24)
@@ -48,15 +55,23 @@ struct PlayerControlView: View {
                             .onChanged { value in
                                 isDragging = true
                                 let locationX = max(0, min(value.location.x, width))
-                                let progress = locationX / width
-                                dragTime = Double(progress) * totalDuration
+                                let progress = Double(locationX / width)
+                                dragProgress = progress
                             }
                             .onEnded { value in
                                 let locationX = max(0, min(value.location.x, width))
-                                let progress = locationX / width
-                                let targetTime = Double(progress) * totalDuration
+                                let progress = Double(locationX / width)
+                                dragProgress = progress
+                                let targetTime = progress * totalDuration
                                 playerManager.seek(to: targetTime)
-                                isDragging = false
+
+                                // 延时清除临时手势进度，让 Seek 锁平稳过渡，绝不出现原点跳闪
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    if !isDragging {
+                                        dragProgress = nil
+                                    }
+                                    isDragging = false
+                                }
                             }
                     )
                 }
@@ -64,7 +79,15 @@ struct PlayerControlView: View {
 
                 // 时间标签与缓冲提示
                 HStack {
-                    Text(formatTime(isDragging ? dragTime : playerManager.currentTime))
+                    let totalDuration = max(1.0, playerManager.duration)
+                    let currentShownSeconds: Double = {
+                        if let drag = dragProgress {
+                            return drag * totalDuration
+                        }
+                        return playerManager.currentTime
+                    }()
+
+                    Text(formatTime(currentShownSeconds))
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundColor(.secondary)
 
