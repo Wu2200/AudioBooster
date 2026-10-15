@@ -108,6 +108,10 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     // MARK: - 加载并播放 (全异步非阻塞)
+    func loadAndPlay(urlString: String, title: String? = nil, initialBoost: Float? = nil) {
+        loadAndPlay(urlString: urlString, multiplier: initialBoost, title: title)
+    }
+
     func loadAndPlay(urlString: String, multiplier: Float? = nil, title: String? = nil) {
         let cleaned = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: cleaned) else {
@@ -402,6 +406,10 @@ final class AudioPlayerManager: ObservableObject {
                 completion?()
             }
         }
+    }
+
+    func skip(by seconds: Double) {
+        skip(seconds: seconds)
     }
 
     func skip(seconds: Double) {
