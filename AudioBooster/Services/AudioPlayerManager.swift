@@ -406,6 +406,10 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
+    func skip(by seconds: Double) {
+        skip(seconds: seconds)
+    }
+
     func skip(seconds: Double) {
         let target = max(0.0, min(duration, currentTime + seconds))
         seek(to: target)
