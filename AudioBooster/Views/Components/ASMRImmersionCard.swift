@@ -2,49 +2,37 @@ import SwiftUI
 
 struct ASMRImmersionCard: View {
     @ObservedObject var playerManager: AudioPlayerManager
-    @State private var showDetailSheet: Bool = false
 
     let sleepTimerPresets = [0, 15, 30, 45, 60, 90]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // 头部标题与当前模式标签
+            // 头部标题（锁定单行，不放变宽标签，彻底杜绝折行与抖动）
             HStack {
                 Label("ASMR 沉浸调音 & 助眠", systemImage: "headphones")
                     .font(.headline)
                     .foregroundColor(.primary)
-
+                    .lineLimit(1)
                 Spacer()
-
-                HStack(spacing: 4) {
-                    Image(systemName: playerManager.asmrMode.icon)
-                    Text(playerManager.asmrMode.rawValue)
-                        .font(.caption.bold())
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(Color.purple.opacity(0.16))
-                .foregroundColor(.purple)
-                .clipShape(Capsule())
             }
 
-            // 4 大音效模式网格选择器
+            // 4 大音效模式网格选择器（固定高度，杜绝尺寸跳变）
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                 ForEach(ASMREffectMode.allCases) { mode in
                     Button(action: {
                         playerManager.setASMREffectMode(mode)
                     }) {
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 3) {
                             HStack {
                                 Image(systemName: mode.icon)
                                     .font(.subheadline)
                                 Text(mode.rawValue)
                                     .font(.subheadline.bold())
+                                    .lineLimit(1)
                                 Spacer()
                                 if playerManager.asmrMode == mode {
                                     Image(systemName: "checkmark.circle.fill")
                                         .font(.caption)
-                                        .foregroundColor(.white)
                                 }
                             }
                             Text(mode.summary)
@@ -52,8 +40,9 @@ struct ASMRImmersionCard: View {
                                 .opacity(0.85)
                                 .lineLimit(1)
                         }
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, minHeight: 56, maxHeight: 56, alignment: .leading)
                         .background(
                             playerManager.asmrMode == mode ?
                             Color.purple : Color(UIColor.secondarySystemBackground)
@@ -64,6 +53,7 @@ struct ASMRImmersionCard: View {
                         )
                         .cornerRadius(12)
                     }
+                    .buttonStyle(PlainButtonStyle())
                 }
             }
 
@@ -146,44 +136,6 @@ struct ASMRImmersionCard: View {
                     }
                 }
                 .tint(.purple)
-            }
-
-            Divider()
-
-            // 侧睡声道平衡调节 (Ear Balance)
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("左右耳声道平衡")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    if playerManager.earBalance != 0.0 {
-                        Button("重置居中") {
-                            withAnimation {
-                                playerManager.earBalance = 0.0
-                            }
-                        }
-                        .font(.caption2)
-                        .foregroundColor(.purple)
-                    } else {
-                        Text("双耳居中")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-
-                HStack(spacing: 10) {
-                    Text("左耳")
-                        .font(.caption2)
-                        .foregroundColor(playerManager.earBalance < -0.1 ? .purple : .secondary)
-
-                    Slider(value: $playerManager.earBalance, in: -1.0...1.0, step: 0.05)
-                        .tint(.purple)
-
-                    Text("右耳")
-                        .font(.caption2)
-                        .foregroundColor(playerManager.earBalance > 0.1 ? .purple : .secondary)
-                }
             }
         }
         .padding(16)
