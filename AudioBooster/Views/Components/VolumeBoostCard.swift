@@ -71,7 +71,7 @@ struct VolumeBoostCard: View {
                         .foregroundColor(badgeColor)
                 }
 
-                Slider(value: $playerManager.boostMultiplier, in: 1.0...4.0, step: 0.1)
+                Slider(value: $playerManager.boostMultiplier, in: 1.0...8.0, step: 0.1)
                     .accentColor(badgeColor)
             }
         }
@@ -81,8 +81,12 @@ struct VolumeBoostCard: View {
     }
 
     private var gainBadgeText: String {
-        if playerManager.boostMultiplier >= 3.8 {
-            return "4x 极限突破"
+        if playerManager.boostMultiplier >= 7.5 {
+            return "8x 极限突破"
+        } else if playerManager.boostMultiplier >= 5.5 {
+            return "6x 强力突破"
+        } else if playerManager.boostMultiplier >= 3.8 {
+            return "4x 强劲放大"
         } else if playerManager.boostMultiplier >= 2.8 {
             return "3x 强力增益"
         } else if playerManager.boostMultiplier >= 1.8 {
@@ -93,7 +97,9 @@ struct VolumeBoostCard: View {
     }
 
     private var badgeColor: Color {
-        if playerManager.boostMultiplier >= 3.5 {
+        if playerManager.boostMultiplier >= 6.0 {
+            return .purple
+        } else if playerManager.boostMultiplier >= 3.5 {
             return .red
         } else if playerManager.boostMultiplier >= 2.5 {
             return .orange
