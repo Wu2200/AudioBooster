@@ -1,0 +1,77 @@
+name: Build and Package IPA
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build IPA
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+
+      - name: Generate Xcode Project
+        run: |
+          xcodegen generate
+
+      - name: Build Application (.app)
+        run: |
+          xcodebuild clean build \
+            -project AudioBooster.xcodeproj \
+            -scheme AudioBooster \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" -maxdepth 1)
+          echo "Found app at: $APP_PATH"
+          cp -R "$APP_PATH" Payload/
+          zip -r AudioBooster.ipa Payload
+          ls -lh AudioBooster.ipa
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AudioBooster-ipa
+          path: AudioBooster.ipa
+          retention-days: 14
+
+      - name: Create Release and Upload IPA
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: AudioBooster v1.0.${{ github.run_number }}
+          body: |
+            ## AudioBooster 自动打包发布 (IPA)
+            - 自动编译构建于 GitHub Actions (Run: #${{ github.run_number }})
+            - 支持突破 iOS 系统音量限制 2x / 3x / 4x (+12dB)
+            - 支持外部 URL Scheme 一键跳转唤起播放 (`audioboost://play?url=...`)
+            - 适配 TrollStore (巨魔)、AltStore、Sideloadly、牛蛙助手或个人免费开发者证书自签侧载安装
+          files: AudioBooster.ipa
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

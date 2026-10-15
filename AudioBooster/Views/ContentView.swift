@@ -1,0 +1,248 @@
+import SwiftUI
+
+struct ContentView: View {
+    @EnvironmentObject var playerManager: AudioPlayerManager
+
+    @State private var inputURL: String = ""
+    @State private var recentAudios: [AudioItem] = []
+    @State private var showSchemeHelper: Bool = false
+
+    private let sampleAudios: [(name: String, url: String)] = [
+        ("纯音测试 (440Hz 音调)", "https://actions.google.com/sounds/v1/science_fiction/alien_hum.ogg"),
+        ("自然风声 (环境音频)", "https://actions.google.com/sounds/v1/weather/wind_synthetic.ogg"),
+        ("清脆水滴 (动态瞬态)", "https://actions.google.com/sounds/v1/water/rain_heavy.ogg")
+    ]
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(spacing: 18) {
+                    // 浮动通知栏
+                    if playerManager.showNotificationBanner {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                            Text(playerManager.notificationText)
+                                .font(.footnote)
+                                .fontWeight(.medium)
+                            Spacer()
+                        }
+                        .padding(12)
+                        .background(Color(UIColor.tertiarySystemGroupedBackground))
+                        .cornerRadius(10)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+
+                    // 错误提示
+                    if let err = playerManager.errorMessage {
+                        HStack {
+                            Image(systemName: "exclamationmark.octagon.fill")
+                                .foregroundColor(.red)
+                            Text(err)
+                                .font(.footnote)
+                                .foregroundColor(.red)
+                            Spacer()
+                        }
+                        .padding(12)
+                        .background(Color.red.opacity(0.12))
+                        .cornerRadius(10)
+                    }
+
+                    // 顶部当前状态与动态波形卡片
+                    VStack(spacing: 12) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(playerManager.currentTitle)
+                                    .font(.title3)
+                                    .fontWeight(.bold)
+                                    .lineLimit(1)
+                                Text(playerManager.isPlaying ? "正在播放中 (突破增强模式)" : "已暂停")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            WaveformVisualizerView(
+                                isPlaying: playerManager.isPlaying,
+                                boostMultiplier: playerManager.boostMultiplier
+                            )
+                        }
+                    }
+                    .padding(16)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(16)
+
+                    // 播放控制器
+                    PlayerControlView(playerManager: playerManager)
+
+                    // 音量突破核心卡片 (1x / 2x / 3x / 4x)
+                    VolumeBoostCard(playerManager: playerManager)
+
+                    // 音频地址输入卡片
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Label("输入音频链接", systemImage: "link")
+                                .font(.headline)
+                            Spacer()
+                            Button("从剪贴板粘贴") {
+                                if let string = UIPasteboard.general.string {
+                                    inputURL = string
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                        }
+
+                        HStack {
+                            TextField("https://example.com/audio.mp3", text: $inputURL)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .keyboardType(.URL)
+                                .autocapitalization(.none)
+                                .disableAutocorrection(true)
+
+                            if !inputURL.isEmpty {
+                                Button(action: { inputURL = "" }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+
+                        Button(action: {
+                            guard !inputURL.isEmpty else { return }
+                            playerManager.loadAndPlay(urlString: inputURL)
+                            saveToHistory(url: inputURL)
+                        }) {
+                            HStack {
+                                Spacer()
+                                Image(systemName: "play.circle.fill")
+                                Text("立即加载并播放")
+                                    .fontWeight(.bold)
+                                Spacer()
+                            }
+                            .padding(.vertical, 12)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                        }
+                    }
+                    .padding(16)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(16)
+
+                    // 外部一键跳转使用指南 (URL Scheme)
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Label("外部一键跳转播放指南", systemImage: "bolt.fill")
+                                .font(.headline)
+                            Spacer()
+                            Button(showSchemeHelper ? "收起" : "展开") {
+                                withAnimation {
+                                    showSchemeHelper.toggle()
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                        }
+
+                        if showSchemeHelper {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("本应用支持通过自定义协议 `audioboost://` 外部唤起并一键播放音频，支持集成到 iOS 快捷指令（Shortcuts）、Safari 网页、Workflow 或其他应用。")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+
+                                Divider()
+
+                                Text("URL Scheme 格式示例：")
+                                    .font(.caption)
+                                    .fontWeight(.bold)
+
+                                codeBlock(text: "audioboost://play?url=https://example.com/sound.mp3&boost=3.0")
+
+                                Text("参数说明：\n• url: 音频文件直链 (需 URL 编码)\n• boost: 音量倍数 (1.0 至 4.0)\n• title: 可选自定义标题")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+
+                                Button(action: {
+                                    UIPasteboard.general.string = "audioboost://play?url=https%3A%2F%2Fexample.com%2Fsound.mp3&boost=2.0"
+                                    playerManager.showNotificationBanner = true
+                                    playerManager.notificationText = "已复制 URL Scheme 示例"
+                                }) {
+                                    HStack {
+                                        Image(systemName: "doc.on.doc")
+                                        Text("复制示例协议链接")
+                                    }
+                                    .font(.caption)
+                                    .padding(.vertical, 6)
+                                    .padding(.horizontal, 12)
+                                    .background(Color.blue.opacity(0.12))
+                                    .foregroundColor(.blue)
+                                    .cornerRadius(8)
+                                }
+                            }
+                        }
+                    }
+                    .padding(16)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(16)
+
+                    // 演示样本音频
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("预置音效试听", systemImage: "music.note.list")
+                            .font(.headline)
+
+                        ForEach(sampleAudios, id: \.url) { item in
+                            Button(action: {
+                                inputURL = item.url
+                                playerManager.loadAndPlay(urlString: item.url, title: item.name)
+                            }) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(item.name)
+                                            .font(.subheadline)
+                                            .foregroundColor(.primary)
+                                        Text(item.url)
+                                            .font(.caption2)
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "play.circle")
+                                        .foregroundColor(.blue)
+                                }
+                                .padding(.vertical, 6)
+                            }
+                            if item.url != sampleAudios.last?.url {
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(16)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(16)
+                }
+                .padding()
+            }
+            .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
+            .navigationTitle("AudioBooster")
+        }
+        .navigationViewStyle(StackNavigationViewStyle())
+    }
+
+    private func codeBlock(text: String) -> some View {
+        Text(text)
+            .font(.system(.caption, design: .monospaced))
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(UIColor.tertiarySystemGroupedBackground))
+            .cornerRadius(6)
+    }
+
+    private func saveToHistory(url: String) {
+        let item = AudioItem(title: URL(string: url)?.lastPathComponent ?? "网络音频", urlString: url)
+        recentAudios.removeAll { $0.urlString == url }
+        recentAudios.insert(item, at: 0)
+        if recentAudios.count > 10 {
+            recentAudios.removeLast()
+        }
+    }
+}
