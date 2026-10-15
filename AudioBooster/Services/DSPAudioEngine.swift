@@ -31,8 +31,13 @@ final class DSPAudioEngine {
 
     private var displayLinkTimer: Timer?
 
+    // 记录当前活跃的临时缓存文件路径
+    private var currentActiveCacheFileURL: URL?
+
     init() {
         setupEngineNodes()
+        // 启动时清理历史残留缓存
+        DSPAudioEngine.clearAllOldCaches()
     }
 
     deinit {
@@ -124,15 +129,22 @@ final class DSPAudioEngine {
     private func loadRemoteURL(url: URL, startTime: Double, completion: (() -> Void)? = nil) {
         let hashName = String(url.absoluteString.hashValue)
         let ext = url.pathExtension.isEmpty ? "mp3" : url.pathExtension
-        let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent("dsp_cache_\(hashName).\(ext)")
+        let cacheDir = FileManager.default.temporaryDirectory.appendingPathComponent("dsp_audio_cache", isDirectory: true)
+
+        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        let targetFile = cacheDir.appendingPathComponent("dsp_\(hashName).\(ext)")
 
         // 如果本地已存在该缓存文件且有效，直接秒开载入
-        if FileManager.default.fileExists(atPath: tempFile.path),
-           let attr = try? FileManager.default.attributesOfItem(atPath: tempFile.path),
+        if FileManager.default.fileExists(atPath: targetFile.path),
+           let attr = try? FileManager.default.attributesOfItem(atPath: targetFile.path),
            let size = attr[.size] as? Int64, size > 10240 {
-            loadLocalFile(url: tempFile, startTime: startTime, completion: completion)
+            self.currentActiveCacheFileURL = targetFile
+            loadLocalFile(url: targetFile, startTime: startTime, completion: completion)
             return
         }
+
+        // 清理除当前文件之外的历史旧缓存，防止沙盒数据暴增
+        cleanOldCaches(preserving: targetFile)
 
         onBufferProgress?(0.05, "DSP 内核建立连接中...")
 
@@ -158,14 +170,15 @@ final class DSPAudioEngine {
             }
 
             do {
-                if FileManager.default.fileExists(atPath: tempFile.path) {
-                    try FileManager.default.removeItem(at: tempFile)
+                if FileManager.default.fileExists(atPath: targetFile.path) {
+                    try FileManager.default.removeItem(at: targetFile)
                 }
-                try FileManager.default.moveItem(at: tempLocation, to: tempFile)
+                try FileManager.default.moveItem(at: tempLocation, to: targetFile)
+                self.currentActiveCacheFileURL = targetFile
 
                 DispatchQueue.main.async {
                     self.onBufferProgress?(1.0, nil)
-                    self.loadLocalFile(url: tempFile, startTime: startTime, completion: completion)
+                    self.loadLocalFile(url: targetFile, startTime: startTime, completion: completion)
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -385,15 +398,55 @@ final class DSPAudioEngine {
         }
     }
 
-    // MARK: - 音量突破与防爆音压限控制
+    // MARK: - 音量突破与防爆音压限控制 (最高支持 8x)
     func setBoostMultiplier(_ mult: Float, isLimiterEnabled: Bool) {
-        if isLimiterEnabled && mult > 2.0 {
-            // 双曲正切平滑饱和软压限，防止大音量破音
-            let excess = mult - 2.0
-            let compressedExcess = Float(tanh(Double(excess) / 1.8)) * 1.6
-            volumeNode.outputVolume = 2.0 + compressedExcess
+        let clamped = max(1.0, min(8.0, mult))
+        if isLimiterEnabled && clamped > 2.0 {
+            // 阶梯式双曲正切软压限：既保护耳膜防爆破音，又使 4x~8x 拥有真实的渐进庞大声压
+            let excess = clamped - 2.0
+            let boostValue = 2.0 + Float(tanh(Double(excess) / 3.0)) * 4.5
+            volumeNode.outputVolume = boostValue
         } else {
-            volumeNode.outputVolume = mult
+            volumeNode.outputVolume = clamped
+        }
+    }
+
+    // MARK: - 智能缓存清理机制 (防止沙盒膨胀)
+    private func cleanOldCaches(preserving current: URL? = nil) {
+        DispatchQueue.global(qos: .utility).async {
+            let fileManager = FileManager.default
+            let cacheDir = fileManager.temporaryDirectory.appendingPathComponent("dsp_audio_cache", isDirectory: true)
+
+            guard let files = try? fileManager.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: nil) else { return }
+
+            for file in files {
+                if let curr = current, file.path == curr.path {
+                    continue
+                }
+                try? fileManager.removeItem(at: file)
+            }
+        }
+    }
+
+    static func clearAllOldCaches() {
+        DispatchQueue.global(qos: .utility).async {
+            let fileManager = FileManager.default
+
+            // 1. 清理专用 dsp_audio_cache 目录
+            let cacheDir = fileManager.temporaryDirectory.appendingPathComponent("dsp_audio_cache", isDirectory: true)
+            try? fileManager.removeItem(at: cacheDir)
+
+            // 2. 清理之前散落在 /tmp 目录下的旧 dsp_cache_* 文件
+            if let tmpFiles = try? fileManager.contentsOfDirectory(at: fileManager.temporaryDirectory, includingPropertiesForKeys: nil) {
+                for file in tmpFiles {
+                    if file.lastPathComponent.hasPrefix("dsp_cache_") {
+                        try? fileManager.removeItem(at: file)
+                    }
+                }
+            }
+
+            // 3. 清理系统网络缓存
+            URLCache.shared.removeAllCachedResponses()
         }
     }
 }
