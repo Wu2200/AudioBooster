@@ -7,27 +7,27 @@ import MediaToolbox
 
 enum ASMREffectMode: String, CaseIterable, Identifiable {
     case standard = "标准原声"
-    case whisperClean = "耳语贴耳"
-    case softSleep = "温和助眠"
-    case spatialBinaural = "3D 沉浸环绕"
+    case whisperBreath = "呼吸贴耳"
+    case warmIntimate = "温软慢语"
+    case binauralAir = "双耳包裹"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
         case .standard: return "waveform"
-        case .whisperClean: return "mic.fill"
-        case .softSleep: return "moon.stars.fill"
-        case .spatialBinaural: return "dot.radiowaves.left.and.right"
+        case .whisperBreath: return "wind"
+        case .warmIntimate: return "heart.fill"
+        case .binauralAir: return "headphones"
         }
     }
 
     var summary: String {
         switch self {
         case .standard: return "原始音频直出，无额外渲染"
-        case .whisperClean: return "强化近场耳语响度，细节分明"
-        case .softSleep: return "柔化刺耳高频，温和安抚放松"
-        case .spatialBinaural: return "拓展双耳环绕声场，沉浸包裹"
+        case .whisperBreath: return "强化喘息与耳语气流，细节贴耳"
+        case .warmIntimate: return "软化齿音，温润软糯助眠"
+        case .binauralAir: return "人声居中贴耳，立体声空气包裹"
         }
     }
 }
