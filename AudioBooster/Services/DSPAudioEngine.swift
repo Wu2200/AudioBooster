@@ -326,7 +326,8 @@ final class DSPAudioEngine {
         switch mode {
         case .standard:
             eqNode.bypass = true
-            reverbNode.bypass = true
+            reverbNode.wetDryMix = 0.0
+            reverbNode.bypass = false
 
         case .whisperClean:
             // 【耳语贴耳】：开启 120Hz 高通切除杂音，并在 3200Hz 强力提升 +9.0dB，大幅度凸显近场呼吸与唇齿细节
@@ -348,7 +349,8 @@ final class DSPAudioEngine {
             band2.bypass = true
 
             eqNode.bypass = false
-            reverbNode.bypass = true
+            reverbNode.wetDryMix = 0.0
+            reverbNode.bypass = false
 
         case .softSleep:
             // 【温和助眠】：开启 6500Hz 低通柔化刺耳高频，并在 250Hz 提供 +3.5dB 温暖包裹
