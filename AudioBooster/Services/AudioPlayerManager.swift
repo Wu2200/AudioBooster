@@ -146,6 +146,7 @@ final class AudioPlayerManager: ObservableObject {
                     self.setupPlayerObservers(for: newPlayer)
                 } else {
                     self.player?.replaceCurrentItem(with: item)
+                    self.setupPlayerObservers(for: self.player!)
                 }
 
                 self.setupItemObservers(for: item)
