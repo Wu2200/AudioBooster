@@ -160,10 +160,14 @@ final class DSPAudioEngine {
         onBufferProgress?(0.05, "DSP 内核建立连接中...")
 
         var request = URLRequest(url: url)
+        request.networkServiceType = .responsiveData
         request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("audio/webm,audio/ogg,audio/wav,audio/*;q=0.9,application/ogg;q=0.7,video/*;q=0.6,*/*;q=0.5", forHTTPHeaderField: "Accept")
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        request.setValue("keep-alive", forHTTPHeaderField: "Connection")
         request.setValue("\(url.scheme ?? "http")://\(url.host ?? "")/", forHTTPHeaderField: "Referer")
 
-        let task = URLSession.shared.downloadTask(with: request) { [weak self] (tempLocation, response, error) in
+        let task = downloadSession.downloadTask(with: request) { [weak self] (tempLocation, response, error) in
             guard let self = self else { return }
 
             if let error = error {
