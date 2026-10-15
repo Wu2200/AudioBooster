@@ -42,40 +42,28 @@ struct ContentView: View {
                         .cornerRadius(10)
                     }
 
-                    // 顶部当前播放信息卡片 (稳定清晰，移除跳动动画)
-                    VStack(spacing: 12) {
-                        HStack(alignment: .center, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(playerManager.currentTitle)
-                                    .font(.title3)
-                                    .fontWeight(.bold)
-                                    .lineLimit(2)
-                                    .foregroundColor(.primary)
+                    // 顶部当前播放信息卡片 (纯净优雅排版，已移除多余喇叭图标)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(playerManager.currentTitle)
+                            .font(.title3)
+                            .fontWeight(.bold)
+                            .lineLimit(2)
+                            .foregroundColor(.primary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
-                                Text(playerManager.isPlaying ? "正在播放中 (突破增强模式)" : (playerManager.isBuffering ? "正在缓冲网络音频..." : "已暂停"))
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Spacer()
-
-                            // 静态精致播放指示器
-                            Image(systemName: playerManager.isPlaying ? "speaker.wave.2.fill" : "speaker.slash.fill")
-                                .font(.system(size: 20))
-                                .foregroundColor(playerManager.isPlaying ? .blue : .secondary)
-                                .frame(width: 44, height: 44)
-                                .background(Color(UIColor.tertiarySystemGroupedBackground))
-                                .clipShape(Circle())
-                        }
+                        Text(playerManager.isPlaying ? "正在播放中 (突破增强模式)" : (playerManager.isBuffering ? "正在缓冲网络音频..." : "已暂停"))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
                     .background(Color(UIColor.secondarySystemGroupedBackground))
                     .cornerRadius(16)
 
-                    // 播放控制器 (支持预载条与单击/滑动进度调节)
+                    // 播放控制器 (深灰对比预载条 + 平滑防跳闪单击/滑动)
                     PlayerControlView(playerManager: playerManager)
 
-                    // 音量突破核心卡片 (1x / 2x / 3x / 4x)
+                    // 音量突破核心卡片 (1x / 2x / 3x / 4x，自动持久化记忆)
                     VolumeBoostCard(playerManager: playerManager)
 
                     // 音频地址输入卡片
@@ -159,12 +147,12 @@ struct ContentView: View {
 
                                 codeBlock(text: "audioboost://play?url=https://example.com/sound.mp3&boost=3.0")
 
-                                Text("参数说明：\n• url: 音频文件直链 (需 URL 编码)\n• boost: 音量倍数 (1.0 至 4.0)\n• title: 可选自定义标题")
+                                Text("参数说明：\n• url: 音频文件直链 (需 URL 编码)\n• boost: 可选音量倍数 (不指定则默认保持 App 记忆的上次倍数)\n• title: 可选自定义歌曲标题")
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
 
                                 Button(action: {
-                                    UIPasteboard.general.string = "audioboost://play?url=https%3A%2F%2Fexample.com%2Fsound.mp3&boost=2.0"
+                                    UIPasteboard.general.string = "audioboost://play?url=https%3A%2F%2Fexample.com%2Fsound.mp3"
                                     playerManager.showNotificationBanner = true
                                     playerManager.notificationText = "已复制 URL Scheme 示例"
                                 }) {
@@ -204,7 +192,8 @@ struct ContentView: View {
     }
 
     private func saveToHistory(url: String) {
-        let item = AudioItem(title: URL(string: url)?.lastPathComponent ?? "网络音频", urlString: url)
+        let cleanName = AudioPlayerManager.cleanTitle(raw: URL(string: url)?.lastPathComponent ?? "网络音频")
+        let item = AudioItem(title: cleanName, urlString: url)
         recentAudios.removeAll { $0.urlString == url }
         recentAudios.insert(item, at: 0)
         if recentAudios.count > 10 {
