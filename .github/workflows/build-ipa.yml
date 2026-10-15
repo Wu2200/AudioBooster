@@ -38,8 +38,9 @@ jobs:
 
       - name: Generate App Icon
         run: |
-          pip3 install --quiet pillow
-          python3 Scripts/generate_icon.py
+          python3 -m venv /tmp/icon_env
+          /tmp/icon_env/bin/pip install --quiet pillow
+          /tmp/icon_env/bin/python Scripts/generate_icon.py
           ls -lh AudioBooster/Assets.xcassets/AppIcon.appiconset/
 
       - name: Install XcodeGen
