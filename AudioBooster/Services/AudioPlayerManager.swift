@@ -4,6 +4,27 @@ import AVFoundation
 import MediaPlayer
 import Combine
 
+enum PlayerEngineType: String, CaseIterable, Identifiable {
+    case classic = "通用内核 (AVPlayer)"
+    case dsp = "专业 DSP 内核 (AVAudioEngine)"
+
+    var id: String { rawValue }
+
+    var badge: String {
+        switch self {
+        case .classic: return "秒开起播 · 超高兼容"
+        case .dsp: return "32位浮点 · 真EQ与环绕"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .classic: return "bolt.shield.fill"
+        case .dsp: return "slider.horizontal.3"
+        }
+    }
+}
+
 enum ASMREffectMode: String, CaseIterable, Identifiable {
     case standard = "标准原声"
     case whisperClean = "耳语贴耳"
@@ -33,6 +54,10 @@ enum ASMREffectMode: String, CaseIterable, Identifiable {
 
 final class AudioPlayerManager: ObservableObject {
     static let shared = AudioPlayerManager()
+
+    // MARK: - 双内核选择系统
+    @Published var currentEngineType: PlayerEngineType = .classic
+    @Published var dspBufferProgressText: String? = nil
 
     // MARK: - 基础播放状态
     @Published var isPlaying: Bool = false
@@ -77,8 +102,10 @@ final class AudioPlayerManager: ObservableObject {
     @Published var showNotificationBanner: Bool = false
     @Published var notificationText: String = ""
 
-    // MARK: - 底层播放组件
+    // MARK: - 底层组件 (双内核)
     var player: AVPlayer?
+    let dspEngine = DSPAudioEngine()
+
     private var timeObserverToken: Any?
     private var statusObserver: NSKeyValueObservation?
     private var timeControlObserver: NSKeyValueObservation?
@@ -87,6 +114,7 @@ final class AudioPlayerManager: ObservableObject {
 
     private var sleepTimerCancellable: AnyCancellable?
     private let volumeStorageKey = "AudioBooster_SavedMultiplier_v1"
+    private let engineStorageKey = "AudioBooster_SavedEngine_v1"
 
     private init() {
         if let savedMultiplier = UserDefaults.standard.object(forKey: volumeStorageKey) as? Float, savedMultiplier >= 1.0 {
@@ -95,6 +123,14 @@ final class AudioPlayerManager: ObservableObject {
             self.boostMultiplier = 1.0
         }
 
+        if let savedEngineRaw = UserDefaults.standard.string(forKey: engineStorageKey),
+           let savedEngine = PlayerEngineType(rawValue: savedEngineRaw) {
+            self.currentEngineType = savedEngine
+        } else {
+            self.currentEngineType = .classic
+        }
+
+        setupDSPEngineCallbacks()
         setupRemoteCommandCenter()
         setupInterruptionObservers()
     }
@@ -107,7 +143,95 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
-    // MARK: - 加载并播放 (全异步非阻塞，统一单签名杜绝重载歧义)
+    // MARK: - DSP 引擎事件回调绑定
+    private func setupDSPEngineCallbacks() {
+        dspEngine.onStateChange = { [weak self] isPlaying in
+            DispatchQueue.main.async {
+                guard let self = self, self.currentEngineType == .dsp else { return }
+                self.isPlaying = isPlaying
+                self.updateNowPlayingInfo()
+            }
+        }
+
+        dspEngine.onTimeUpdate = { [weak self] current, duration in
+            DispatchQueue.main.async {
+                guard let self = self, self.currentEngineType == .dsp else { return }
+                self.currentTime = current
+                if duration > 0 {
+                    self.duration = duration
+                    self.bufferedTime = duration
+                }
+            }
+        }
+
+        dspEngine.onBufferProgress = { [weak self] fraction, text in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.dspBufferProgressText = text
+                if fraction >= 1.0 {
+                    self.isBuffering = false
+                }
+            }
+        }
+
+        dspEngine.onPlaybackEnd = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self = self, self.currentEngineType == .dsp else { return }
+                if self.isLooping {
+                    self.seek(to: 0.0) {
+                        self.play()
+                    }
+                } else {
+                    self.isPlaying = false
+                    self.currentTime = 0.0
+                    self.seek(to: 0.0)
+                    self.updateNowPlayingInfo()
+                }
+            }
+        }
+
+        dspEngine.onError = { [weak self] msg in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                self.isBuffering = false
+                self.errorMessage = msg
+            }
+        }
+    }
+
+    // MARK: - 双内核无缝切换
+    func switchEngine(to target: PlayerEngineType) {
+        guard target != currentEngineType else { return }
+
+        let previousTime = self.currentTime
+        let wasPlaying = self.isPlaying
+        let url = self.currentURLString
+        let title = self.currentTitle
+
+        // 停止当前内核播放
+        if currentEngineType == .classic {
+            player?.pause()
+        } else {
+            dspEngine.stop()
+        }
+
+        self.currentEngineType = target
+        UserDefaults.standard.set(target.rawValue, forKey: engineStorageKey)
+
+        self.showNotificationBanner = true
+        self.notificationText = "已切换至: \(target.rawValue)"
+
+        // 如果当前有音频链接，无缝平滑切到新内核继续播放
+        if !url.isEmpty {
+            if target == .classic {
+                loadAndPlayClassic(urlString: url, startTime: previousTime, resumePlay: wasPlaying)
+            } else {
+                loadAndPlayDSP(urlString: url, startTime: previousTime, resumePlay: wasPlaying)
+            }
+        }
+    }
+
+    // MARK: - 加载并播放 (统一入口)
     func loadAndPlay(urlString: String, multiplier: Float? = nil, title: String? = nil, initialBoost: Float? = nil) {
         let cleaned = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: cleaned) else {
@@ -141,6 +265,19 @@ final class AudioPlayerManager: ObservableObject {
             }
         }
 
+        if currentEngineType == .classic {
+            loadAndPlayClassic(urlString: cleaned, startTime: 0.0, resumePlay: true)
+        } else {
+            loadAndPlayDSP(urlString: cleaned, startTime: 0.0, resumePlay: true)
+        }
+    }
+
+    // MARK: - 通用原生内核播放 (AVPlayer)
+    private func loadAndPlayClassic(urlString: String, startTime: Double = 0.0, resumePlay: Bool = true) {
+        guard let url = URL(string: urlString) else { return }
+
+        dspEngine.stop()
+
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
 
@@ -152,12 +289,12 @@ final class AudioPlayerManager: ObservableObject {
             let item = AVPlayerItem(asset: asset)
 
             DispatchQueue.main.async {
-                self.setupPlayerWithItem(item)
+                self.setupPlayerWithItem(item, startTime: startTime, resumePlay: resumePlay)
             }
         }
     }
 
-    private func setupPlayerWithItem(_ item: AVPlayerItem) {
+    private func setupPlayerWithItem(_ item: AVPlayerItem, startTime: Double = 0.0, resumePlay: Bool = true) {
         removePeriodicTimeObserver()
 
         if let endObs = endObserver {
@@ -178,7 +315,7 @@ final class AudioPlayerManager: ObservableObject {
         statusObserver?.invalidate()
         statusObserver = item.observe(\.status, options: [.new]) { [weak self] (observedItem, _) in
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self, self.currentEngineType == .classic else { return }
                 switch observedItem.status {
                 case .readyToPlay:
                     self.isBuffering = false
@@ -186,6 +323,13 @@ final class AudioPlayerManager: ObservableObject {
                     self.duration = (dur.isNaN || dur.isInfinite) ? 0.0 : dur
                     self.applySpatialization(for: observedItem)
                     self.applyVolumeBoost()
+                    if startTime > 0 {
+                        self.seek(to: startTime) {
+                            if resumePlay { self.player?.play() }
+                        }
+                    } else if resumePlay {
+                        self.player?.play()
+                    }
                     self.updateNowPlayingInfo()
                 case .failed:
                     self.isBuffering = false
@@ -200,7 +344,7 @@ final class AudioPlayerManager: ObservableObject {
         timeControlObserver?.invalidate()
         timeControlObserver = player?.observe(\.timeControlStatus, options: [.new]) { [weak self] (observedPlayer, _) in
             DispatchQueue.main.async {
-                guard let self = self else { return }
+                guard let self = self, self.currentEngineType == .classic else { return }
                 switch observedPlayer.timeControlStatus {
                 case .playing:
                     self.isPlaying = true
@@ -218,7 +362,7 @@ final class AudioPlayerManager: ObservableObject {
 
         bufferObserver?.invalidate()
         bufferObserver = item.observe(\.loadedTimeRanges, options: [.new]) { [weak self] (observedItem, _) in
-            guard let self = self else { return }
+            guard let self = self, self.currentEngineType == .classic else { return }
             if let timeRange = observedItem.loadedTimeRanges.first?.timeRangeValue {
                 let start = timeRange.start.seconds
                 let duration = timeRange.duration.seconds
@@ -234,7 +378,7 @@ final class AudioPlayerManager: ObservableObject {
             object: item,
             queue: .main
         ) { [weak self] _ in
-            guard let self = self else { return }
+            guard let self = self, self.currentEngineType == .classic else { return }
             if self.isLooping {
                 self.seek(to: 0.0) { [weak self] in
                     self?.player?.play()
@@ -248,15 +392,36 @@ final class AudioPlayerManager: ObservableObject {
         }
 
         addPeriodicTimeObserver()
-        player?.play()
+        if startTime == 0.0 && resumePlay {
+            player?.play()
+        }
     }
 
-    // MARK: - 空间音频与双耳声场配置
+    // MARK: - 专业 DSP 内核播放 (AVAudioEngine)
+    private func loadAndPlayDSP(urlString: String, startTime: Double = 0.0, resumePlay: Bool = true) {
+        player?.pause()
+        removePeriodicTimeObserver()
+
+        self.isBuffering = true
+        dspEngine.loadAndPlay(urlString: urlString, startTime: startTime) { [weak self] in
+            guard let self = self, self.currentEngineType == .dsp else { return }
+            self.isBuffering = false
+            self.dspBufferProgressText = nil
+            self.duration = self.dspEngine.duration
+            self.dspEngine.applyASMRMode(self.asmrMode)
+            self.dspEngine.setBoostMultiplier(self.boostMultiplier, isLimiterEnabled: self.isLimiterEnabled)
+            if resumePlay {
+                self.dspEngine.play()
+            }
+            self.updateNowPlayingInfo()
+        }
+    }
+
+    // MARK: - 空间音频与双耳声场配置 (AVPlayer 模式)
     private func applySpatialization(for item: AVPlayerItem) {
         if #available(iOS 15.0, *) {
             switch asmrMode {
             case .spatialBinaural:
-                // 开启立体声全空间化声场
                 item.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
             default:
                 item.allowedAudioSpatializationFormats = .multichannel
@@ -266,26 +431,28 @@ final class AudioPlayerManager: ObservableObject {
 
     // MARK: - 音量突破与 ASMR 模式增益计算
     func applyVolumeBoost() {
+        if currentEngineType == .dsp {
+            dspEngine.applyASMRMode(asmrMode)
+            dspEngine.setBoostMultiplier(boostMultiplier, isLimiterEnabled: isLimiterEnabled)
+            return
+        }
+
+        // AVPlayer 模式下的音轨倍数注入
         guard let item = player?.currentItem else { return }
 
         var effectiveMultiplier = self.boostMultiplier
 
-        // 根据 ASMR 预设模式注入明显可感知的增益调整
         switch asmrMode {
         case .whisperClean:
-            // 耳语贴耳：近场呼吸与耳语声提升 25% 听觉强度
             effectiveMultiplier *= 1.25
         case .softSleep:
-            // 温和助眠：降低 15% 的尖锐刺激性响度，更利于安抚入眠
             effectiveMultiplier *= 0.85
         case .spatialBinaural:
-            // 空间化模式下微调补偿
             effectiveMultiplier *= 1.05
         case .standard:
             break
         }
 
-        // 大音量突破下的防爆音软饱和压限算法
         if self.isLimiterEnabled && effectiveMultiplier > 2.0 {
             let excess = effectiveMultiplier - 2.0
             let compressedExcess = Float(tanh(Double(excess) / 1.8)) * 1.6
@@ -326,10 +493,14 @@ final class AudioPlayerManager: ObservableObject {
     // MARK: - ASMR 音效模式切换
     func setASMREffectMode(_ mode: ASMREffectMode) {
         self.asmrMode = mode
-        if let item = player?.currentItem {
-            applySpatialization(for: item)
+        if currentEngineType == .dsp {
+            dspEngine.applyASMRMode(mode)
+        } else {
+            if let item = player?.currentItem {
+                applySpatialization(for: item)
+            }
+            applyVolumeBoost()
         }
-        applyVolumeBoost()
     }
 
     // MARK: - 睡眠定时器
@@ -355,7 +526,11 @@ final class AudioPlayerManager: ObservableObject {
                     // 到期前 30 秒平滑淡出
                     if self.sleepTimerRemainingSeconds <= 30 && self.sleepTimerRemainingSeconds > 0 {
                         let fadeRatio = Float(self.sleepTimerRemainingSeconds) / 30.0
-                        self.player?.volume = max(0.05, fadeRatio)
+                        if self.currentEngineType == .classic {
+                            self.player?.volume = max(0.05, fadeRatio)
+                        } else {
+                            self.dspEngine.setBoostMultiplier(self.boostMultiplier * fadeRatio, isLimiterEnabled: true)
+                        }
                     }
                 } else {
                     self.sleepTimerCancellable?.cancel()
@@ -369,6 +544,15 @@ final class AudioPlayerManager: ObservableObject {
 
     // MARK: - 播放与进度控制
     func togglePlayPause() {
+        if currentEngineType == .dsp {
+            if isPlaying {
+                dspEngine.pause()
+            } else {
+                dspEngine.play()
+            }
+            return
+        }
+
         guard let p = player else { return }
         if isPlaying {
             p.pause()
@@ -384,14 +568,33 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     func pause() {
-        player?.pause()
+        if currentEngineType == .dsp {
+            dspEngine.pause()
+        } else {
+            player?.pause()
+        }
     }
 
     func play() {
-        player?.play()
+        if currentEngineType == .dsp {
+            dspEngine.play()
+        } else {
+            player?.play()
+        }
     }
 
     func seek(to seconds: Double, completion: (() -> Void)? = nil) {
+        if currentEngineType == .dsp {
+            dspEngine.seek(to: seconds) { [weak self] in
+                DispatchQueue.main.async {
+                    self?.currentTime = seconds
+                    self?.updateNowPlayingInfo()
+                    completion?()
+                }
+            }
+            return
+        }
+
         guard let p = player else {
             completion?()
             return
@@ -415,12 +618,12 @@ final class AudioPlayerManager: ObservableObject {
         seek(to: target)
     }
 
-    // MARK: - 进度监听
+    // MARK: - AVPlayer 进度监听
     private func addPeriodicTimeObserver() {
         removePeriodicTimeObserver()
         let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
         timeObserverToken = player?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            guard let self = self else { return }
+            guard let self = self, self.currentEngineType == .classic else { return }
             let sec = time.seconds
             if !sec.isNaN && !sec.isInfinite {
                 self.currentTime = sec
@@ -435,7 +638,7 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
-    // MARK: - 中断监听 (其他应用抢占/来电/耳机拔出)
+    // MARK: - 中断监听
     private func setupInterruptionObservers() {
         NotificationCenter.default.addObserver(
             self,
@@ -535,7 +738,8 @@ final class AudioPlayerManager: ObservableObject {
     func updateNowPlayingInfo() {
         var info: [String: Any] = [:]
         info[MPMediaItemPropertyTitle] = currentTitle
-        info[MPMediaItemPropertyArtist] = String(format: "AudioBooster (%.1fx 增益)", boostMultiplier)
+        let engineTag = currentEngineType == .dsp ? "[DSP] " : ""
+        info[MPMediaItemPropertyArtist] = String(format: "%@AudioBooster (%.1fx 增益)", engineTag, boostMultiplier)
         info[MPMediaItemPropertyPlaybackDuration] = duration
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
