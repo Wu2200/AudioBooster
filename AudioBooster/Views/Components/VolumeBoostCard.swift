@@ -82,11 +82,11 @@ struct VolumeBoostCard: View {
 
     private var gainBadgeText: String {
         if playerManager.boostMultiplier >= 3.8 {
-            return "🔥 4x 极限突破"
+            return "4x 极限突破"
         } else if playerManager.boostMultiplier >= 2.8 {
-            return "⚡ 3x 强力增益"
+            return "3x 强力增益"
         } else if playerManager.boostMultiplier >= 1.8 {
-            return "🚀 2x 音量放大"
+            return "2x 音量放大"
         } else {
             return "标准原声"
         }
