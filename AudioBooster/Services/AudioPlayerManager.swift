@@ -401,6 +401,10 @@ final class AudioPlayerManager: ObservableObject {
         seek(to: target)
     }
 
+    func skip(by seconds: Double) {
+        skip(seconds: seconds)
+    }
+
     // MARK: - AVPlayer 进度监听
     private func addPeriodicTimeObserver() {
         removePeriodicTimeObserver()
