@@ -42,7 +42,7 @@ struct ContentView: View {
                         .cornerRadius(10)
                     }
 
-                    // 顶部当前播放信息卡片 (纯净优雅排版，已移除多余喇叭图标)
+                    // 顶部当前播放信息卡片 (纯净优雅排版)
                     VStack(alignment: .leading, spacing: 6) {
                         Text(playerManager.currentTitle)
                             .font(.title3)
@@ -65,6 +65,9 @@ struct ContentView: View {
 
                     // 音量突破核心卡片 (1x / 2x / 3x / 4x，自动持久化记忆)
                     VolumeBoostCard(playerManager: playerManager)
+
+                    // ASMR 沉浸调音 & 助眠卡片 (耳语贴耳 / 3D环绕 / 软压限 / 睡眠定时器 / 侧睡平衡)
+                    ASMRImmersionCard(playerManager: playerManager)
 
                     // 音频地址输入卡片
                     VStack(alignment: .leading, spacing: 12) {
