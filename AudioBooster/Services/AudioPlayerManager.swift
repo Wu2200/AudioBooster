@@ -147,6 +147,10 @@ final class AudioPlayerManager: ObservableObject {
             player.pause()
             isPlaying = false
         } else {
+            // 如果已经在末尾（相差小于 0.5 秒或已到达总时长），重新播放时先归零
+            if duration > 0 && currentTime >= duration - 0.5 {
+                seek(to: 0)
+            }
             player.play()
             isPlaying = true
         }
@@ -299,7 +303,8 @@ final class AudioPlayerManager: ObservableObject {
             guard let self = self else { return }
             self.isPlaying = false
             self.currentTime = 0
-            self.player?.seek(to: .zero)
+            self.player?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+            self.updateNowPlayingPlaybackState()
         }
     }
 
