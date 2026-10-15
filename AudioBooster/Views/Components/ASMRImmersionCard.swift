@@ -28,8 +28,7 @@ struct ASMRImmersionCard: View {
                                 .font(.system(size: 14, weight: .bold))
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(mode.rawValue)
-                                    .font(.subheadline)
-                                    .fontWeight(isSelected ? .bold : .medium)
+                                    .font(isSelected ? .subheadline.bold() : .subheadline)
                                     .lineLimit(1)
                                 Text(mode.summary)
                                     .font(.system(size: 9))
@@ -77,7 +76,6 @@ struct ASMRImmersionCard: View {
                         HStack(spacing: 4) {
                             Text(timerDisplayText)
                                 .font(.footnote)
-                                .fontWeight(.medium)
                             Image(systemName: "chevron.up.chevron.down")
                                 .font(.system(size: 10))
                         }
@@ -100,7 +98,6 @@ struct ASMRImmersionCard: View {
                             .font(.system(size: 12, weight: .bold))
                         Text(playerManager.isLooping ? "单曲循环中" : "列表播放")
                             .font(.footnote)
-                            .fontWeight(.medium)
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
