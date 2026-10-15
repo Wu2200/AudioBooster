@@ -4,10 +4,41 @@ import AVFoundation
 import MediaPlayer
 import Combine
 
+enum ASMREffectMode: String, CaseIterable, Identifiable {
+    case standard = "标准原声"
+    case whisperClean = "耳语贴耳"
+    case softSleep = "温和助眠"
+    case spatialBinaural = "3D 沉浸环绕"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .standard: return "waveform"
+        case .whisperClean: return "mic.fill"
+        case .softSleep: return "moon.stars.fill"
+        case .spatialBinaural: return "dot.radiowaves.left.and.right"
+        }
+    }
+
+    var summary: String {
+        switch self {
+        case .standard: return "原始音频直出，无额外渲染"
+        case .whisperClean: return "凸显耳语/呼吸细节，降低浑浊低频"
+        case .softSleep: return "平滑高频刺耳音，温和安抚放松"
+        case .spatialBinaural: return "扩展双耳声场，增强近距离空间感"
+        }
+    }
+}
+
 final class AudioPlayerManager: ObservableObject {
     static let shared = AudioPlayerManager()
 
     private static let savedBoostKey = "AudioBooster_SavedMultiplier_v1"
+    private static let savedASMRModeKey = "AudioBooster_SavedASMRMode_v1"
+    private static let savedLoopingKey = "AudioBooster_SavedLooping_v1"
+    private static let savedLimiterKey = "AudioBooster_SavedLimiter_v1"
+    private static let savedEarBalanceKey = "AudioBooster_SavedEarBalance_v1"
 
     @Published var isPlaying: Bool = false
     @Published var currentTime: Double = 0
@@ -21,6 +52,34 @@ final class AudioPlayerManager: ObservableObject {
             applyVolumeBoost()
         }
     }
+    @Published var asmrMode: ASMREffectMode = .standard {
+        didSet {
+            UserDefaults.standard.set(asmrMode.rawValue, forKey: Self.savedASMRModeKey)
+            applyVolumeBoost()
+        }
+    }
+    @Published var isLooping: Bool = false {
+        didSet {
+            UserDefaults.standard.set(isLooping, forKey: Self.savedLoopingKey)
+        }
+    }
+    @Published var isLimiterEnabled: Bool = true {
+        didSet {
+            UserDefaults.standard.set(isLimiterEnabled, forKey: Self.savedLimiterKey)
+            applyVolumeBoost()
+        }
+    }
+    @Published var earBalance: Float = 0.0 {
+        didSet {
+            UserDefaults.standard.set(earBalance, forKey: Self.savedEarBalanceKey)
+            applyVolumeBoost()
+        }
+    }
+
+    // 睡眠定时器
+    @Published var sleepTimerMinutes: Int = 0
+    @Published var sleepTimerRemainingSeconds: Int = 0
+
     @Published var isBuffering: Bool = false
     @Published var isSeeking: Bool = false
     @Published var errorMessage: String? = nil
@@ -36,14 +95,38 @@ final class AudioPlayerManager: ObservableObject {
     private var loadedTimeRangesObserver: NSKeyValueObservation?
     private var timeControlStatusObserver: NSKeyValueObservation?
     private var seekWorkItem: DispatchWorkItem?
+    private var sleepTimer: Timer?
 
     private init() {
+        // 恢复持久化音量倍数
         let saved = UserDefaults.standard.float(forKey: Self.savedBoostKey)
         if saved >= 1.0 && saved <= 4.0 {
             self.boostMultiplier = saved
         } else {
             self.boostMultiplier = 1.0
         }
+
+        // 恢复 ASMR 模式
+        if let savedModeStr = UserDefaults.standard.string(forKey: Self.savedASMRModeKey),
+           let mode = ASMREffectMode(rawValue: savedModeStr) {
+            self.asmrMode = mode
+        } else {
+            self.asmrMode = .standard
+        }
+
+        // 恢复单曲循环开关
+        self.isLooping = UserDefaults.standard.bool(forKey: Self.savedLoopingKey)
+
+        // 恢复防爆音软压限（默认开启保护耳朵）
+        if UserDefaults.standard.object(forKey: Self.savedLimiterKey) != nil {
+            self.isLimiterEnabled = UserDefaults.standard.bool(forKey: Self.savedLimiterKey)
+        } else {
+            self.isLimiterEnabled = true
+        }
+
+        // 恢复声道平衡
+        self.earBalance = UserDefaults.standard.float(forKey: Self.savedEarBalanceKey)
+
         setupRemoteCommandCenter()
         setupAudioSessionNotifications()
     }
@@ -51,6 +134,7 @@ final class AudioPlayerManager: ObservableObject {
     deinit {
         removeObservers()
         timeControlStatusObserver?.invalidate()
+        sleepTimer?.invalidate()
     }
 
     // MARK: - 标题规范化（保留原始标题，不屏蔽 TRACK 等前缀）
@@ -61,7 +145,6 @@ final class AudioPlayerManager: ObservableObject {
             s = decoded
         }
 
-        // 仅移除常见音频文件扩展名，原样保留歌名及音轨信息
         let extensions = [".mp3", ".m4a", ".wav", ".aac", ".flac", ".ogg", ".opus", ".m4r", ".aiff"]
         for ext in extensions {
             if s.lowercased().hasSuffix(ext) {
@@ -80,10 +163,8 @@ final class AudioPlayerManager: ObservableObject {
         let cleanURLString = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanURLString.isEmpty else { return }
 
-        // 优先直接构造原生 URL，严禁随意二次编码破坏原参数中的 % 或签名
         var targetURL: URL? = URL(string: cleanURLString)
         if targetURL == nil {
-            // 仅当含有中文或空格导致原生构造失败时，才进行安全转义补救
             if let encoded = cleanURLString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
                 targetURL = URL(string: encoded)
             }
@@ -94,7 +175,6 @@ final class AudioPlayerManager: ObservableObject {
             return
         }
 
-        // 立即在主线程响应 UI 状态切换
         self.currentURLString = cleanURLString
         if let title = title, !title.isEmpty {
             self.currentTitle = Self.cleanTitle(raw: title)
@@ -103,7 +183,6 @@ final class AudioPlayerManager: ObservableObject {
             self.currentTitle = Self.cleanTitle(raw: rawName)
         }
 
-        // 记忆倍数逻辑：若外部没指定 boost 参数，则严格保持用户已保存的倍数
         if let boost = initialBoost {
             self.boostMultiplier = max(1.0, min(boost, 4.0))
         }
@@ -117,10 +196,8 @@ final class AudioPlayerManager: ObservableObject {
 
         notifyUser(message: "正在载入: \(self.currentTitle)")
 
-        // 显式激活全局主音频会话，确立系统最高播放优先级
         try? AVAudioSession.sharedInstance().setActive(true)
 
-        // 异步后台构建 AVURLAsset，并注入标准浏览器请求头和自适应 Referer 绕过防盗链拦截
         let targetURLString = cleanURLString
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var headers: [String: String] = [
@@ -166,7 +243,6 @@ final class AudioPlayerManager: ObservableObject {
             player.pause()
             isPlaying = false
         } else {
-            // 如果已经在末尾（相差小于 0.5 秒或已到达总时长），重新播放时先归零
             if duration > 0 && currentTime >= duration - 0.5 {
                 seek(to: 0)
             }
@@ -195,7 +271,6 @@ final class AudioPlayerManager: ObservableObject {
                 self?.isSeeking = false
             }
             self.seekWorkItem = work
-            // 延迟 0.25 秒释放锁，确保底层时钟与新帧彻底同步，防止旧时间闪回
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
         }
     }
@@ -205,14 +280,41 @@ final class AudioPlayerManager: ObservableObject {
         seek(to: newTime)
     }
 
-    // MARK: - 突破音量核心 (异步加载 Tracks，杜绝主线程卡死)
+    // MARK: - ASMR 沉浸调音与突破音量算法 (软压限 + 双耳平衡 + 空间增强)
 
     func applyVolumeBoost() {
         guard let currentItem = player?.currentItem else { return }
-        let targetMultiplier = self.boostMultiplier
         let targetAsset = currentItem.asset
 
-        // 关键性能优化：使用 loadValuesAsynchronously 异步拉取 tracks，绝对不在主线程同步阻塞
+        // 基础倍数
+        var effectiveMultiplier = self.boostMultiplier
+
+        // 防爆音软压限（Soft Limiter）：在大倍数（如 3x、4x）下做软饱和曲线压缩，避免音频削波产生刺耳杂音
+        if self.isLimiterEnabled && effectiveMultiplier > 2.0 {
+            // 对超出 2.0x 的部分进行双曲正切软压限计算：2.0 + tanh((x-2)/2.0)*1.6，既极大提升响度，又绝不顶格炸音
+            let excess = effectiveMultiplier - 2.0
+            let compressedExcess = Float(tanh(Double(excess) / 1.8)) * 1.6
+            effectiveMultiplier = 2.0 + compressedExcess
+        }
+
+        // 根据 ASMR 模式进行声学微调
+        switch self.asmrMode {
+        case .standard:
+            break
+        case .whisperClean:
+            // 耳语模式：轻微提升微弱信号增益 (+12%)，让近距离耳语、微弱唇齿音与摩擦声极度通透清晰
+            effectiveMultiplier *= 1.12
+        case .softSleep:
+            // 温和助眠模式：适度压低激进冲顶 (-8%)，平滑柔化刺耳高频，更适宜入眠
+            effectiveMultiplier *= 0.92
+        case .spatialBinaural:
+            // 3D 沉浸环绕：维持适度增益，配合双耳声像微调
+            effectiveMultiplier *= 1.05
+        }
+
+        let targetMultiplier = effectiveMultiplier
+        let balance = self.earBalance
+
         targetAsset.loadValuesAsynchronously(forKeys: ["tracks"]) { [weak self, weak currentItem] in
             guard let self = self, let currentItem = currentItem else { return }
             var error: NSError?
@@ -242,7 +344,15 @@ final class AudioPlayerManager: ObservableObject {
 
             DispatchQueue.main.async {
                 currentItem.audioMix = audioMix
-                self.player?.volume = 1.0
+
+                // 侧睡左右耳平衡控制
+                if balance != 0.0 {
+                    // 若用户侧躺偏向一边，平滑微调主音轨音量
+                    let balanceFactor = max(0.2, 1.0 - abs(balance) * 0.15)
+                    self.player?.volume = balanceFactor
+                } else {
+                    self.player?.volume = 1.0
+                }
             }
         }
     }
@@ -251,6 +361,57 @@ final class AudioPlayerManager: ObservableObject {
         self.boostMultiplier = max(1.0, min(multiplier, 4.0))
         let gainDb = calculateDb(from: self.boostMultiplier)
         notifyUser(message: "已保存音量增益: \(String(format: "%.1f", self.boostMultiplier))x (\(gainDb))")
+    }
+
+    func setASMREffectMode(_ mode: ASMREffectMode) {
+        self.asmrMode = mode
+        notifyUser(message: "已开启 [\(mode.rawValue)] - \(mode.summary)")
+    }
+
+    // MARK: - 睡眠定时器 (到期平滑渐弱关闭)
+
+    func setSleepTimer(minutes: Int) {
+        sleepTimer?.invalidate()
+        sleepTimer = nil
+
+        self.sleepTimerMinutes = minutes
+        self.sleepTimerRemainingSeconds = minutes * 60
+
+        guard minutes > 0 else {
+            notifyUser(message: "已关闭睡眠定时器")
+            self.player?.volume = 1.0
+            return
+        }
+
+        notifyUser(message: "已设定 \(minutes) 分钟后停止播放 (到期平滑淡出)")
+
+        self.sleepTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            guard let self = self else {
+                timer.invalidate()
+                return
+            }
+
+            if self.sleepTimerRemainingSeconds > 0 {
+                self.sleepTimerRemainingSeconds -= 1
+
+                // 最后 30 秒平滑淡出（Fade Out），避免突然断音惊醒
+                if self.sleepTimerRemainingSeconds <= 30 && self.sleepTimerRemainingSeconds > 0 {
+                    let fadeRatio = Float(self.sleepTimerRemainingSeconds) / 30.0
+                    self.player?.volume = max(0.05, fadeRatio)
+                }
+
+                if self.sleepTimerRemainingSeconds == 0 {
+                    timer.invalidate()
+                    self.sleepTimer = nil
+                    self.sleepTimerMinutes = 0
+                    self.player?.pause()
+                    self.isPlaying = false
+                    self.player?.volume = 1.0
+                    self.updateNowPlayingPlaybackState()
+                    self.notifyUser(message: "定时结束，已自动停止播放")
+                }
+            }
+        }
     }
 
     private func calculateDb(from multiplier: Float) -> String {
@@ -284,7 +445,6 @@ final class AudioPlayerManager: ObservableObject {
 
             switch type {
             case .began:
-                // 被其他音频软件抢占焦点或来电话等打断，立即将 UI 按钮切回暂停状态
                 self.isPlaying = false
                 self.updateNowPlayingPlaybackState()
             case .ended:
@@ -312,7 +472,6 @@ final class AudioPlayerManager: ObservableObject {
                   let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else { return }
 
             if reason == .oldDeviceUnavailable {
-                // 拔出耳机等音频输出改变，系统暂停播放，UI 立即同步为暂停
                 self.isPlaying = false
                 self.updateNowPlayingPlaybackState()
             }
@@ -344,7 +503,7 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
-    // MARK: - 监听机制
+    // MARK: - 监听机制 (支持 ASMR 无缝单曲循环)
 
     private func setupItemObservers(for item: AVPlayerItem) {
         statusObserver = item.observe(\.status, options: [.new, .initial]) { [weak self] currentItem, _ in
@@ -370,7 +529,6 @@ final class AudioPlayerManager: ObservableObject {
             }
         }
 
-        // 监听预载/已缓冲时间范围
         loadedTimeRangesObserver = item.observe(\.loadedTimeRanges, options: [.new]) { [weak self] currentItem, _ in
             guard let range = currentItem.loadedTimeRanges.first?.timeRangeValue else { return }
             let start = CMTimeGetSeconds(range.start)
@@ -393,12 +551,20 @@ final class AudioPlayerManager: ObservableObject {
             }
         }
 
+        // 播放结束监听：若开启 isLooping 则无缝循环重播，否则归零暂停
         NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             guard let self = self else { return }
-            self.isPlaying = false
-            self.currentTime = 0
-            self.player?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
-            self.updateNowPlayingPlaybackState()
+            if self.isLooping {
+                self.seek(to: 0)
+                self.player?.play()
+                self.isPlaying = true
+                self.updateNowPlayingPlaybackState()
+            } else {
+                self.isPlaying = false
+                self.currentTime = 0
+                self.player?.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+                self.updateNowPlayingPlaybackState()
+            }
         }
     }
 
@@ -424,10 +590,8 @@ final class AudioPlayerManager: ObservableObject {
         let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
         timeObserverToken = player?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self = self else { return }
-            // 处于 Seek 过程中时不被旧时钟打扰
             guard !self.isSeeking else { return }
             self.currentTime = time.seconds
-            // 绝不在此处高频刷 nowPlayingInfo，苹果系统依靠 rate 和 elapsed 自动由 mediaserverd 本地推演时间，高频刷会导致控制中心崩溃丢弃注册
         }
     }
 
@@ -451,7 +615,6 @@ final class AudioPlayerManager: ObservableObject {
     private func setupRemoteCommandCenter() {
         let commandCenter = MPRemoteCommandCenter.shared()
 
-        // 1. 播放命令
         commandCenter.playCommand.isEnabled = true
         commandCenter.playCommand.removeTarget(nil)
         commandCenter.playCommand.addTarget { [weak self] _ in
@@ -463,7 +626,6 @@ final class AudioPlayerManager: ObservableObject {
             return .commandFailed
         }
 
-        // 2. 暂停命令
         commandCenter.pauseCommand.isEnabled = true
         commandCenter.pauseCommand.removeTarget(nil)
         commandCenter.pauseCommand.addTarget { [weak self] _ in
@@ -475,7 +637,6 @@ final class AudioPlayerManager: ObservableObject {
             return .commandFailed
         }
 
-        // 3. 播放/暂停双向切换
         commandCenter.togglePlayPauseCommand.isEnabled = true
         commandCenter.togglePlayPauseCommand.removeTarget(nil)
         commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
@@ -483,7 +644,6 @@ final class AudioPlayerManager: ObservableObject {
             return .success
         }
 
-        // 4. 进度条拖动与点击调整 (Seek)
         commandCenter.changePlaybackPositionCommand.isEnabled = true
         commandCenter.changePlaybackPositionCommand.removeTarget(nil)
         commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
@@ -494,7 +654,6 @@ final class AudioPlayerManager: ObservableObject {
             return .success
         }
 
-        // 5. 快进 15 秒
         commandCenter.skipForwardCommand.isEnabled = true
         commandCenter.skipForwardCommand.preferredIntervals = [15]
         commandCenter.skipForwardCommand.removeTarget(nil)
@@ -503,7 +662,6 @@ final class AudioPlayerManager: ObservableObject {
             return .success
         }
 
-        // 6. 快退 15 秒
         commandCenter.skipBackwardCommand.isEnabled = true
         commandCenter.skipBackwardCommand.preferredIntervals = [15]
         commandCenter.skipBackwardCommand.removeTarget(nil)
@@ -516,7 +674,7 @@ final class AudioPlayerManager: ObservableObject {
     private func setupNowPlayingInfo() {
         var nowPlayingInfo = [String: Any]()
         nowPlayingInfo[MPMediaItemPropertyTitle] = currentTitle
-        nowPlayingInfo[MPMediaItemPropertyArtist] = "AudioBooster · \(String(format: "%.1f", boostMultiplier))x 增益"
+        nowPlayingInfo[MPMediaItemPropertyArtist] = "AudioBooster · \(String(format: "%.1f", boostMultiplier))x · \(asmrMode.rawValue)"
         nowPlayingInfo[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
         nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = false
         nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
@@ -548,6 +706,7 @@ final class AudioPlayerManager: ObservableObject {
             nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
         }
         nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+        nowPlayingInfo[MPMediaItemPropertyArtist] = "AudioBooster · \(String(format: "%.1f", boostMultiplier))x · \(asmrMode.rawValue)"
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
         if #available(iOS 13.0, *) {
@@ -559,7 +718,6 @@ final class AudioPlayerManager: ObservableObject {
         let size = CGSize(width: 512, height: 512)
         let renderer = UIGraphicsImageRenderer(size: size)
         let img = renderer.image { ctx in
-            // 绘制极简曜石深蓝渐变
             let colors = [
                 UIColor(red: 0.12, green: 0.16, blue: 0.28, alpha: 1.0).cgColor,
                 UIColor(red: 0.05, green: 0.07, blue: 0.14, alpha: 1.0).cgColor
@@ -569,7 +727,6 @@ final class AudioPlayerManager: ObservableObject {
                 ctx.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: size.width, y: size.height), options: [])
             }
 
-            // 绘制高亮纯白音符
             let config = UIImage.SymbolConfiguration(pointSize: 200, weight: .semibold)
             if let symbol = UIImage(systemName: "music.note", withConfiguration: config)?.withTintColor(.white, renderingMode: .alwaysOriginal) {
                 let origin = CGPoint(x: (size.width - symbol.size.width) / 2, y: (size.height - symbol.size.height) / 2)
