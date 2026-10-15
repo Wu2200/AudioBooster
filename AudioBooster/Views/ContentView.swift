@@ -7,12 +7,6 @@ struct ContentView: View {
     @State private var recentAudios: [AudioItem] = []
     @State private var showSchemeHelper: Bool = false
 
-    private let sampleAudios: [(name: String, url: String)] = [
-        ("纯音测试 (440Hz 音调)", "https://actions.google.com/sounds/v1/science_fiction/alien_hum.ogg"),
-        ("自然风声 (环境音频)", "https://actions.google.com/sounds/v1/weather/wind_synthetic.ogg"),
-        ("清脆水滴 (动态瞬态)", "https://actions.google.com/sounds/v1/water/rain_heavy.ogg")
-    ]
-
     var body: some View {
         NavigationView {
             ScrollView {
@@ -48,30 +42,37 @@ struct ContentView: View {
                         .cornerRadius(10)
                     }
 
-                    // 顶部当前状态与动态波形卡片
+                    // 顶部当前播放信息卡片 (稳定清晰，移除跳动动画)
                     VStack(spacing: 12) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .center, spacing: 12) {
+                            VStack(alignment: .leading, spacing: 5) {
                                 Text(playerManager.currentTitle)
                                     .font(.title3)
                                     .fontWeight(.bold)
-                                    .lineLimit(1)
-                                Text(playerManager.isPlaying ? "正在播放中 (突破增强模式)" : "已暂停")
+                                    .lineLimit(2)
+                                    .foregroundColor(.primary)
+
+                                Text(playerManager.isPlaying ? "正在播放中 (突破增强模式)" : (playerManager.isBuffering ? "正在缓冲网络音频..." : "已暂停"))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
+
                             Spacer()
-                            WaveformVisualizerView(
-                                isPlaying: playerManager.isPlaying,
-                                boostMultiplier: playerManager.boostMultiplier
-                            )
+
+                            // 静态精致播放指示器
+                            Image(systemName: playerManager.isPlaying ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(playerManager.isPlaying ? .blue : .secondary)
+                                .frame(width: 44, height: 44)
+                                .background(Color(UIColor.tertiarySystemGroupedBackground))
+                                .clipShape(Circle())
                         }
                     }
                     .padding(16)
                     .background(Color(UIColor.secondarySystemGroupedBackground))
                     .cornerRadius(16)
 
-                    // 播放控制器
+                    // 播放控制器 (支持预载条与单击/滑动进度调节)
                     PlayerControlView(playerManager: playerManager)
 
                     // 音量突破核心卡片 (1x / 2x / 3x / 4x)
@@ -178,41 +179,6 @@ struct ContentView: View {
                                     .foregroundColor(.blue)
                                     .cornerRadius(8)
                                 }
-                            }
-                        }
-                    }
-                    .padding(16)
-                    .background(Color(UIColor.secondarySystemGroupedBackground))
-                    .cornerRadius(16)
-
-                    // 演示样本音频
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label("预置音效试听", systemImage: "music.note.list")
-                            .font(.headline)
-
-                        ForEach(sampleAudios, id: \.url) { item in
-                            Button(action: {
-                                inputURL = item.url
-                                playerManager.loadAndPlay(urlString: item.url, title: item.name)
-                            }) {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(item.name)
-                                            .font(.subheadline)
-                                            .foregroundColor(.primary)
-                                        Text(item.url)
-                                            .font(.caption2)
-                                            .foregroundColor(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                    Spacer()
-                                    Image(systemName: "play.circle")
-                                        .foregroundColor(.blue)
-                                }
-                                .padding(.vertical, 6)
-                            }
-                            if item.url != sampleAudios.last?.url {
-                                Divider()
                             }
                         }
                     }
