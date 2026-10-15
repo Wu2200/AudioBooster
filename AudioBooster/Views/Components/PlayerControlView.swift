@@ -31,9 +31,9 @@ struct PlayerControlView: View {
                             .fill(Color(UIColor.systemGray5))
                             .frame(height: 6)
 
-                        // 2. 预载 / 缓冲进度条 (深灰色，高对比清晰可见)
+                        // 2. 预载 / 缓冲进度条 (柔和浅灰色，清晰且不突兀)
                         Capsule()
-                            .fill(Color(UIColor.systemGray2))
+                            .fill(Color(UIColor.systemGray4))
                             .frame(width: max(0, width * CGFloat(clampedBuffer)), height: 6)
 
                         // 3. 当前播放进度条 (亮蓝高亮)
@@ -64,13 +64,13 @@ struct PlayerControlView: View {
                                 dragProgress = progress
                                 let targetTime = progress * totalDuration
                                 playerManager.seek(to: targetTime)
+                                isDragging = false
 
                                 // 延时清除临时手势进度，让 Seek 锁平稳过渡，绝不出现原点跳闪
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                                     if !isDragging {
                                         dragProgress = nil
                                     }
-                                    isDragging = false
                                 }
                             }
                     )
