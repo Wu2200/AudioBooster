@@ -51,7 +51,7 @@ struct ContentView: View {
                             .foregroundColor(.primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                        Text(playerManager.isPlaying ? "正在播放中 (突破增强模式)" : (playerManager.isBuffering ? "正在缓冲网络音频..." : "已暂停"))
+                        Text(playerManager.isPlaying ? "正在播放" : (playerManager.isBuffering ? "正在缓冲网络音频..." : "已暂停"))
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
