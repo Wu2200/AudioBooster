@@ -267,6 +267,81 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
+    // MARK: - 系统音频会话与中断监听
+
+    private func setupAudioSessionNotifications() {
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self,
+                  let userInfo = notification.userInfo,
+                  let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+
+            switch type {
+            case .began:
+                // 被其他音频软件抢占焦点或来电话等打断，立即将 UI 按钮切回暂停状态
+                self.isPlaying = false
+                self.updateNowPlayingPlaybackState()
+            case .ended:
+                if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
+                    let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
+                    if options.contains(.shouldResume) {
+                        self.player?.play()
+                        self.isPlaying = true
+                        self.updateNowPlayingPlaybackState()
+                    }
+                }
+            @unknown default:
+                break
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self = self,
+                  let userInfo = notification.userInfo,
+                  let reasonValue = userInfo[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  let reason = AVAudioSession.RouteChangeReason(rawValue: reasonValue) else { return }
+
+            if reason == .oldDeviceUnavailable {
+                // 拔出耳机等音频输出改变，系统暂停播放，UI 立即同步为暂停
+                self.isPlaying = false
+                self.updateNowPlayingPlaybackState()
+            }
+        }
+    }
+
+    private func setupPlayerObservers(for player: AVPlayer) {
+        timeControlStatusObserver?.invalidate()
+        timeControlStatusObserver = player.observe(\.timeControlStatus, options: [.new, .initial]) { [weak self] playerInstance, _ in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch playerInstance.timeControlStatus {
+                case .playing:
+                    if !self.isPlaying {
+                        self.isPlaying = true
+                        self.updateNowPlayingPlaybackState()
+                    }
+                case .paused:
+                    if self.isPlaying {
+                        self.isPlaying = false
+                        self.updateNowPlayingPlaybackState()
+                    }
+                case .waitingToPlayAtSpecifiedRate:
+                    break
+                @unknown default:
+                    break
+                }
+            }
+        }
+    }
+
     // MARK: - 监听机制
 
     private func setupItemObservers(for item: AVPlayerItem) {
