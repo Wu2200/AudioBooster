@@ -7,27 +7,27 @@ import MediaToolbox
 
 enum ASMREffectMode: String, CaseIterable, Identifiable {
     case standard = "标准原声"
+    case allInOne = "综合全感"
     case whisperBreath = "呼吸贴耳"
-    case warmIntimate = "温软慢语"
-    case binauralAir = "双耳包裹"
+    case spatial3D = "3D 空间环绕"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
         case .standard: return "waveform"
+        case .allInOne: return "sparkles"
         case .whisperBreath: return "wind"
-        case .warmIntimate: return "heart.fill"
-        case .binauralAir: return "headphones"
+        case .spatial3D: return "dot.radiowaves.left.and.right"
         }
     }
 
     var summary: String {
         switch self {
         case .standard: return "原始音频直出，无额外渲染"
-        case .whisperBreath: return "强化喘息与耳语气流，细节贴耳"
-        case .warmIntimate: return "软化齿音，温润软糯助眠"
-        case .binauralAir: return "人声居中贴耳，立体声空气包裹"
+        case .allInOne: return "呼吸细节+人声饱满+底噪净化"
+        case .whisperBreath: return "聚焦近距离喘息与微弱唇齿音"
+        case .spatial3D: return "保留经典空间音频，沉浸声场"
         }
     }
 }
@@ -64,7 +64,7 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     // MARK: - ASMR 特效与助眠系统
-    @Published var asmrMode: ASMREffectMode = .standard {
+    @Published var asmrMode: ASMREffectMode = .allInOne {
         didSet {
             UserDefaults.standard.set(asmrMode.rawValue, forKey: asmrModeStorageKey)
             syncDSPParameters()
@@ -114,15 +114,15 @@ final class AudioPlayerManager: ObservableObject {
                 self.asmrMode = savedMode
             } else if savedModeRaw == "耳语贴耳" {
                 self.asmrMode = .whisperBreath
-            } else if savedModeRaw == "温和助眠" {
-                self.asmrMode = .warmIntimate
-            } else if savedModeRaw == "3D 沉浸环绕" {
-                self.asmrMode = .binauralAir
+            } else if savedModeRaw == "温软慢语" || savedModeRaw == "温和助眠" {
+                self.asmrMode = .allInOne
+            } else if savedModeRaw == "双耳包裹" || savedModeRaw == "3D 沉浸环绕" {
+                self.asmrMode = .spatial3D
             } else {
-                self.asmrMode = .standard
+                self.asmrMode = .allInOne
             }
         } else {
-            self.asmrMode = .standard
+            self.asmrMode = .allInOne
         }
 
         syncDSPParameters()
