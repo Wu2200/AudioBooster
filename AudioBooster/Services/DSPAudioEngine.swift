@@ -86,10 +86,10 @@ final class DSPAudioEngine {
 
         eqNode.bypass = true
 
-        // 2. 初始化 Reverb 空间化
+        // 2. 初始化 Reverb 空间化 (保持 bypass=false 且 wetDryMix=0.0，避免苹果节点断流静音Bug)
         reverbNode.loadFactoryPreset(.mediumHall)
         reverbNode.wetDryMix = 0.0
-        reverbNode.bypass = true
+        reverbNode.bypass = false
 
         // 3. 初始音量
         volumeNode.outputVolume = 1.0
