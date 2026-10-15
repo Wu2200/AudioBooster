@@ -50,7 +50,7 @@ final class AudioPlayerManager: ObservableObject {
         removeObservers()
     }
 
-    // MARK: - 标题智能净化与规范化
+    // MARK: - 标题规范化（保留原始标题，不屏蔽 TRACK 等前缀）
 
     static func cleanTitle(raw: String) -> String {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -58,7 +58,7 @@ final class AudioPlayerManager: ObservableObject {
             s = decoded
         }
 
-        // 移除常见音频文件扩展名
+        // 仅移除常见音频文件扩展名，原样保留歌名及音轨信息
         let extensions = [".mp3", ".m4a", ".wav", ".aac", ".flac", ".ogg", ".opus", ".m4r", ".aiff"]
         for ext in extensions {
             if s.lowercased().hasSuffix(ext) {
@@ -67,17 +67,7 @@ final class AudioPlayerManager: ObservableObject {
             }
         }
 
-        // 智能去除像 "TRACK2 ", "TRACK 02 - ", "Track1_", "01 - ", "02. " 等冗余机械音轨编号
-        let pattern = #"^(TRACK\s*\d+|Track\s*\d+|[0-9]{1,2})\s*[\.\-_\s]+\s*"#
-        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-            let range = NSRange(location: 0, length: s.utf16.count)
-            let modified = regex.stringByReplacingMatches(in: s, options: [], range: range, withTemplate: "")
-            let trimmed = modified.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                s = trimmed
-            }
-        }
-
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
         return s.isEmpty ? "网络音频" : s
     }
 
