@@ -218,9 +218,6 @@ final class AudioPlayerManager: ObservableObject {
         self.currentEngineType = target
         UserDefaults.standard.set(target.rawValue, forKey: engineStorageKey)
 
-        self.showNotificationBanner = true
-        self.notificationText = "已切换至: \(target.rawValue)"
-
         // 如果当前有音频链接，无缝平滑切到新内核继续播放
         if !url.isEmpty {
             if target == .classic {
