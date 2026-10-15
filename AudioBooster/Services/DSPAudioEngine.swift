@@ -22,6 +22,17 @@ final class DSPAudioEngine {
     private var downloadTask: URLSessionDownloadTask?
     private var progressObservation: NSKeyValueObservation?
 
+    // 采用响应式高优先级网络会话，解决普通 downloadTask 被系统调度降权和服务端限速的问题
+    private lazy var downloadSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 3600
+        config.networkServiceType = .responsiveData // 最高交互优先级
+        config.httpMaximumConnectionsPerHost = 6
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: config)
+    }()
+
     // 状态回调给外层 PlayerManager
     var onStateChange: ((Bool) -> Void)?
     var onTimeUpdate: ((Double, Double) -> Void)?
