@@ -34,6 +34,7 @@ final class AudioPlayerManager: ObservableObject {
     private var bufferEmptyObserver: NSKeyValueObservation?
     private var likelyToKeepUpObserver: NSKeyValueObservation?
     private var loadedTimeRangesObserver: NSKeyValueObservation?
+    private var timeControlStatusObserver: NSKeyValueObservation?
     private var seekWorkItem: DispatchWorkItem?
 
     private init() {
@@ -44,6 +45,7 @@ final class AudioPlayerManager: ObservableObject {
             self.boostMultiplier = 1.0
         }
         setupRemoteCommandCenter()
+        setupAudioSessionNotifications()
     }
 
     deinit {
