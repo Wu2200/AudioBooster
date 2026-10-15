@@ -45,12 +45,21 @@ final class AudioPlayerManager: ObservableObject {
     @Published var errorMessage: String? = nil
 
     // MARK: - 音量突破倍数
-    @Published var volumeMultiplier: Float = 1.0 {
+    @Published var boostMultiplier: Float = 1.0 {
         didSet {
-            UserDefaults.standard.set(volumeMultiplier, forKey: volumeStorageKey)
+            UserDefaults.standard.set(boostMultiplier, forKey: volumeStorageKey)
             applyVolumeBoost()
             updateNowPlayingInfo()
         }
+    }
+
+    var volumeMultiplier: Float {
+        get { boostMultiplier }
+        set { boostMultiplier = newValue }
+    }
+
+    func setPresetBoost(_ mult: Float) {
+        self.boostMultiplier = mult
     }
 
     // MARK: - ASMR 特效与助眠系统
@@ -81,9 +90,9 @@ final class AudioPlayerManager: ObservableObject {
 
     private init() {
         if let savedMultiplier = UserDefaults.standard.object(forKey: volumeStorageKey) as? Float, savedMultiplier >= 1.0 {
-            self.volumeMultiplier = savedMultiplier
+            self.boostMultiplier = savedMultiplier
         } else {
-            self.volumeMultiplier = 1.0
+            self.boostMultiplier = 1.0
         }
 
         setupRemoteCommandCenter()
@@ -126,7 +135,7 @@ final class AudioPlayerManager: ObservableObject {
             self.bufferedTime = 0.0
 
             if let targetMultiplier = multiplier {
-                self.volumeMultiplier = targetMultiplier
+                self.boostMultiplier = targetMultiplier
             }
         }
 
@@ -245,7 +254,7 @@ final class AudioPlayerManager: ObservableObject {
         if #available(iOS 15.0, *) {
             switch asmrMode {
             case .spatialBinaural:
-                // 强制开启立体声与全声场空间化
+                // 开启立体声全空间化声场
                 item.allowedAudioSpatializationFormats = .monoStereoAndMultichannel
             default:
                 item.allowedAudioSpatializationFormats = .multichannel
@@ -257,9 +266,9 @@ final class AudioPlayerManager: ObservableObject {
     func applyVolumeBoost() {
         guard let item = player?.currentItem else { return }
 
-        var effectiveMultiplier = self.volumeMultiplier
+        var effectiveMultiplier = self.boostMultiplier
 
-        // 根据 ASMR 预设模式注入针对性增益调整
+        // 根据 ASMR 预设模式注入明显可感知的增益调整
         switch asmrMode {
         case .whisperClean:
             // 耳语贴耳：近场呼吸与耳语声提升 25% 听觉强度
@@ -520,7 +529,7 @@ final class AudioPlayerManager: ObservableObject {
     func updateNowPlayingInfo() {
         var info: [String: Any] = [:]
         info[MPMediaItemPropertyTitle] = currentTitle
-        info[MPMediaItemPropertyArtist] = String(format: "AudioBooster (%.1fx 增益)", volumeMultiplier)
+        info[MPMediaItemPropertyArtist] = String(format: "AudioBooster (%.1fx 增益)", boostMultiplier)
         info[MPMediaItemPropertyPlaybackDuration] = duration
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
         info[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
