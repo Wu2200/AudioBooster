@@ -22,8 +22,10 @@ struct AudioBoosterApp: App {
     private func configureAudioSession() {
         do {
             let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [.duckOthers, .allowAirPlay])
+            // 必须移除 .duckOthers，使用标准主播放器 Category，系统控制中心和锁屏才能接管
+            try session.setCategory(.playback, mode: .default, options: [.allowAirPlay, .allowBluetooth])
             try session.setActive(true)
+            UIApplication.shared.beginReceivingRemoteControlEvents()
         } catch {
             print("AVAudioSession 配置失败: \(error.localizedDescription)")
         }
