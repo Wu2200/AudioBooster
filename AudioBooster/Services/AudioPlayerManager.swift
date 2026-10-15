@@ -117,8 +117,11 @@ final class AudioPlayerManager: ObservableObject {
     private let engineStorageKey = "AudioBooster_SavedEngine_v1"
 
     private init() {
+        // 启动时自动清理历史临时音频缓存，避免占用数百兆空间
+        DSPAudioEngine.clearAllOldCaches()
+
         if let savedMultiplier = UserDefaults.standard.object(forKey: volumeStorageKey) as? Float, savedMultiplier >= 1.0 {
-            self.boostMultiplier = savedMultiplier
+            self.boostMultiplier = min(8.0, savedMultiplier)
         } else {
             self.boostMultiplier = 1.0
         }
@@ -452,11 +455,12 @@ final class AudioPlayerManager: ObservableObject {
 
         if self.isLimiterEnabled && effectiveMultiplier > 2.0 {
             let excess = effectiveMultiplier - 2.0
-            let compressedExcess = Float(tanh(Double(excess) / 1.8)) * 1.6
+            // 适配高达 8.0x 的大动态软饱和增益
+            let compressedExcess = Float(tanh(Double(excess) / 3.0)) * 4.5
             effectiveMultiplier = 2.0 + compressedExcess
         }
 
-        let boost = effectiveMultiplier
+        let boost = min(8.0, effectiveMultiplier)
 
         item.asset.loadValuesAsynchronously(forKeys: ["tracks"]) { [weak self, weak item] in
             guard let self = self, let currentItem = item else { return }
