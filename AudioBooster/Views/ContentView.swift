@@ -11,22 +11,6 @@ struct ContentView: View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 18) {
-                    // 浮动通知栏
-                    if playerManager.showNotificationBanner {
-                        HStack {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                            Text(playerManager.notificationText)
-                                .font(.footnote)
-                                .fontWeight(.medium)
-                            Spacer()
-                        }
-                        .padding(12)
-                        .background(Color(UIColor.tertiarySystemGroupedBackground))
-                        .cornerRadius(10)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-
                     // 错误提示
                     if let err = playerManager.errorMessage {
                         HStack {
