@@ -39,7 +39,7 @@ private func streamTapProcess(
     processor.processBufferList(bufferListInOut, frames: Int(numberFramesOut.pointee))
 }
 
-// MARK: - 实时流媒体 DSP 音频处理器 (边下边播 + 32位浮点调音台)
+// MARK: - 实时流媒体 DSP 音频处理器 (人声/喘息声/综合 ASMR 声学调谐矩阵)
 
 final class StreamDSPProcessor {
     static let shared = StreamDSPProcessor()
@@ -49,36 +49,34 @@ final class StreamDSPProcessor {
     var isLimiterEnabled: Bool = true
     var asmrMode: ASMREffectMode = .standard
 
-    // 预分配立体声延迟缓冲区 (用于 3D 沉浸环绕 Haas 效应，无动态分配)
-    private let delayCapacity = 4096
-    private var delayBufferL: [Float]
-    private var delayBufferR: [Float]
-    private var delayWriteIndex: Int = 0
-    private let delayOffset: Int = 800 // 约 18ms @ 44.1kHz
+    // MARK: - 内部声学滤波器状态量 (预分配常驻内存，零 GC)
+    // 呼吸贴耳 (Whisper & Breath Air EQ)
+    private var breathFilterL: Float = 0.0
+    private var breathFilterR: Float = 0.0
 
-    // 单极点低通滤波器状态量
-    private var lowPassL: Float = 0.0
-    private var lowPassR: Float = 0.0
-    private var sleepFilterL: Float = 0.0
-    private var sleepFilterR: Float = 0.0
+    // 温软慢语 (Warm Vocal & Tube Saturation)
+    private var warmFilterL: Float = 0.0
+    private var warmFilterR: Float = 0.0
+
+    // 双耳包裹 (Mid/Side 空间声学立体声漫射)
+    private let sideDelayCapacity = 2048
+    private var sideDelayBuffer: [Float]
+    private var sideDelayWriteIndex: Int = 0
+    private let sideDelayOffset: Int = 520 // 约 11.8ms 空间泛音漫射
 
     private init() {
-        self.delayBufferL = [Float](repeating: 0.0, count: delayCapacity)
-        self.delayBufferR = [Float](repeating: 0.0, count: delayCapacity)
+        self.sideDelayBuffer = [Float](repeating: 0.0, count: sideDelayCapacity)
     }
 
     func resetStates() {
-        delayBufferL.withUnsafeMutableBufferPointer { ptr in
+        sideDelayBuffer.withUnsafeMutableBufferPointer { ptr in
             ptr.initialize(repeating: 0.0)
         }
-        delayBufferR.withUnsafeMutableBufferPointer { ptr in
-            ptr.initialize(repeating: 0.0)
-        }
-        delayWriteIndex = 0
-        lowPassL = 0.0
-        lowPassR = 0.0
-        sleepFilterL = 0.0
-        sleepFilterR = 0.0
+        sideDelayWriteIndex = 0
+        breathFilterL = 0.0
+        breathFilterR = 0.0
+        warmFilterL = 0.0
+        warmFilterR = 0.0
     }
 
     func makeTap() -> MTAudioProcessingTap? {
@@ -111,7 +109,7 @@ final class StreamDSPProcessor {
         if buffers.count >= 2,
            let ptrL = buffers[0].mData?.assumingMemoryBound(to: Float.self),
            let ptrR = buffers[1].mData?.assumingMemoryBound(to: Float.self) {
-            // 双声道非交错 (Non-interleaved 独立声道)
+            // 双声道非交错 (Non-interleaved)
             for i in 0..<frames {
                 var sL = ptrL[i]
                 var sR = ptrR[i]
@@ -119,31 +117,44 @@ final class StreamDSPProcessor {
                 switch mode {
                 case .standard:
                     break
-                case .whisperClean:
-                    // 【耳语贴耳】：提取高频呼吸与近场摩擦泛音，提升 +6.5dB，轻微压低低频浑浊
-                    lowPassL += 0.25 * (sL - lowPassL)
-                    lowPassR += 0.25 * (sR - lowPassR)
-                    sL = sL + 1.25 * (sL - lowPassL) - 0.15 * lowPassL
-                    sR = sR + 1.25 * (sR - lowPassR) - 0.15 * lowPassR
-                case .softSleep:
-                    // 【温和助眠】：低通柔化滤波，平滑全部尖锐刺耳毛刺，温润安抚
-                    sleepFilterL += 0.38 * (sL - sleepFilterL)
-                    sleepFilterR += 0.38 * (sR - sleepFilterR)
-                    sL = sleepFilterL
-                    sR = sleepFilterR
-                case .spatialBinaural:
-                    // 【3D 沉浸环绕】：基于 Haas 双耳效应拓宽声场宽度，打造开阔沉浸包裹感
-                    let rIdx = (delayWriteIndex - delayOffset + delayCapacity) % delayCapacity
-                    let dL = delayBufferL[rIdx]
-                    let dR = delayBufferR[rIdx]
-                    delayBufferL[delayWriteIndex] = sL
-                    delayBufferR[delayWriteIndex] = sR
-                    delayWriteIndex = (delayWriteIndex + 1) % delayCapacity
-                    sL = sL - 0.32 * dR
-                    sR = sR - 0.32 * dL
+
+                case .whisperBreath:
+                    // 【呼吸贴耳】：聚焦 3.5kHz~8kHz 近场呼吸、气流与唇齿音，保留胸腔温暖基频
+                    let alpha: Float = 0.35
+                    breathFilterL += alpha * (sL - breathFilterL)
+                    breathFilterR += alpha * (sR - breathFilterR)
+                    let airL = sL - breathFilterL
+                    let airR = sR - breathFilterR
+                    // 保持人声主体 (breathFilter) 饱满不薄，将微弱呼吸气流 (air) 提亮 +4.5dB
+                    sL = breathFilterL + 1.68 * airL
+                    sR = breathFilterR + 1.68 * airR
+
+                case .warmIntimate:
+                    // 【温软慢语】：电子管偶次微谐波包浆 + 平滑齿音滚降，软糯温润易眠
+                    let satL = sL + 0.08 * (sL * sL) * (sL >= 0 ? 1.0 : -1.0)
+                    let satR = sR + 0.08 * (sR * sR) * (sR >= 0 ? 1.0 : -1.0)
+                    let beta: Float = 0.62
+                    warmFilterL += beta * (satL - warmFilterL)
+                    warmFilterR += beta * (satR - warmFilterR)
+                    sL = 0.82 * warmFilterL + 0.18 * satL
+                    sR = 0.82 * warmFilterR + 0.18 * satR
+
+                case .binauralAir:
+                    // 【双耳包裹】：M/S 空间扩展，Mid(正中人声喘息) 100% 保持在耳旁绝不相消，Side(空气泛音) 拓宽包裹
+                    let mid = (sL + sR) * 0.5
+                    let side = (sL - sR) * 0.5
+
+                    let rIdx = (sideDelayWriteIndex - sideDelayOffset + sideDelayCapacity) % sideDelayCapacity
+                    let delayedSide = sideDelayBuffer[rIdx]
+                    sideDelayBuffer[sideDelayWriteIndex] = side
+                    sideDelayWriteIndex = (sideDelayWriteIndex + 1) % sideDelayCapacity
+
+                    let expandedSide = side * 1.30 + delayedSide * 0.20
+                    sL = mid + expandedSide
+                    sR = mid - expandedSide
                 }
 
-                // 统一 8.0x 音量突破与防爆音双曲正切软压限
+                // 1x ~ 8x 强力突破放大与双曲正切防爆音软压限
                 ptrL[i] = applyLimit(sL * currentBoost, enabled: useLimiter)
                 ptrR[i] = applyLimit(sR * currentBoost, enabled: useLimiter)
             }
@@ -161,25 +172,32 @@ final class StreamDSPProcessor {
                     switch mode {
                     case .standard:
                         break
-                    case .whisperClean:
-                        lowPassL += 0.25 * (sL - lowPassL)
-                        lowPassR += 0.25 * (sR - lowPassR)
-                        sL = sL + 1.25 * (sL - lowPassL) - 0.15 * lowPassL
-                        sR = sR + 1.25 * (sR - lowPassR) - 0.15 * lowPassR
-                    case .softSleep:
-                        sleepFilterL += 0.38 * (sL - sleepFilterL)
-                        sleepFilterR += 0.38 * (sR - sleepFilterR)
-                        sL = sleepFilterL
-                        sR = sleepFilterR
-                    case .spatialBinaural:
-                        let rIdx = (delayWriteIndex - delayOffset + delayCapacity) % delayCapacity
-                        let dL = delayBufferL[rIdx]
-                        let dR = delayBufferR[rIdx]
-                        delayBufferL[delayWriteIndex] = sL
-                        delayBufferR[delayWriteIndex] = sR
-                        delayWriteIndex = (delayWriteIndex + 1) % delayCapacity
-                        sL = sL - 0.32 * dR
-                        sR = sR - 0.32 * dL
+                    case .whisperBreath:
+                        let alpha: Float = 0.35
+                        breathFilterL += alpha * (sL - breathFilterL)
+                        breathFilterR += alpha * (sR - breathFilterR)
+                        let airL = sL - breathFilterL
+                        let airR = sR - breathFilterR
+                        sL = breathFilterL + 1.68 * airL
+                        sR = breathFilterR + 1.68 * airR
+                    case .warmIntimate:
+                        let satL = sL + 0.08 * (sL * sL) * (sL >= 0 ? 1.0 : -1.0)
+                        let satR = sR + 0.08 * (sR * sR) * (sR >= 0 ? 1.0 : -1.0)
+                        let beta: Float = 0.62
+                        warmFilterL += beta * (satL - warmFilterL)
+                        warmFilterR += beta * (satR - warmFilterR)
+                        sL = 0.82 * warmFilterL + 0.18 * satL
+                        sR = 0.82 * warmFilterR + 0.18 * satR
+                    case .binauralAir:
+                        let mid = (sL + sR) * 0.5
+                        let side = (sL - sR) * 0.5
+                        let rIdx = (sideDelayWriteIndex - sideDelayOffset + sideDelayCapacity) % sideDelayCapacity
+                        let delayedSide = sideDelayBuffer[rIdx]
+                        sideDelayBuffer[sideDelayWriteIndex] = side
+                        sideDelayWriteIndex = (sideDelayWriteIndex + 1) % sideDelayCapacity
+                        let expandedSide = side * 1.30 + delayedSide * 0.20
+                        sL = mid + expandedSide
+                        sR = mid - expandedSide
                     }
 
                     ptr[idxL] = applyLimit(sL * currentBoost, enabled: useLimiter)
@@ -192,13 +210,16 @@ final class StreamDSPProcessor {
                     switch mode {
                     case .standard:
                         break
-                    case .whisperClean:
-                        lowPassL += 0.25 * (s - lowPassL)
-                        s = s + 1.25 * (s - lowPassL) - 0.15 * lowPassL
-                    case .softSleep:
-                        sleepFilterL += 0.38 * (s - sleepFilterL)
-                        s = sleepFilterL
-                    case .spatialBinaural:
+                    case .whisperBreath:
+                        let alpha: Float = 0.35
+                        breathFilterL += alpha * (s - breathFilterL)
+                        let air = s - breathFilterL
+                        s = breathFilterL + 1.68 * air
+                    case .warmIntimate:
+                        let sat = s + 0.08 * (s * s) * (s >= 0 ? 1.0 : -1.0)
+                        warmFilterL += 0.62 * (sat - warmFilterL)
+                        s = 0.82 * warmFilterL + 0.18 * sat
+                    case .binauralAir:
                         break
                     }
                     ptr[i] = applyLimit(s * currentBoost, enabled: useLimiter)
