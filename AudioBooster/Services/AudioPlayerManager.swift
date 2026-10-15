@@ -141,7 +141,9 @@ final class AudioPlayerManager: ObservableObject {
                 self.playerItem = item
 
                 if self.player == nil {
-                    self.player = AVPlayer(playerItem: item)
+                    let newPlayer = AVPlayer(playerItem: item)
+                    self.player = newPlayer
+                    self.setupPlayerObservers(for: newPlayer)
                 } else {
                     self.player?.replaceCurrentItem(with: item)
                 }
