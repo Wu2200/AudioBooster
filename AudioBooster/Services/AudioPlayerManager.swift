@@ -109,9 +109,18 @@ final class AudioPlayerManager: ObservableObject {
             self.boostMultiplier = 1.0
         }
 
-        if let savedModeRaw = UserDefaults.standard.string(forKey: asmrModeStorageKey),
-           let savedMode = ASMREffectMode(rawValue: savedModeRaw) {
-            self.asmrMode = savedMode
+        if let savedModeRaw = UserDefaults.standard.string(forKey: asmrModeStorageKey) {
+            if let savedMode = ASMREffectMode(rawValue: savedModeRaw) {
+                self.asmrMode = savedMode
+            } else if savedModeRaw == "耳语贴耳" {
+                self.asmrMode = .whisperBreath
+            } else if savedModeRaw == "温和助眠" {
+                self.asmrMode = .warmIntimate
+            } else if savedModeRaw == "3D 沉浸环绕" {
+                self.asmrMode = .binauralAir
+            } else {
+                self.asmrMode = .standard
+            }
         } else {
             self.asmrMode = .standard
         }
