@@ -356,7 +356,7 @@ final class AudioPlayerManager: ObservableObject {
             // 处于 Seek 过程中时不被旧时钟打扰
             guard !self.isSeeking else { return }
             self.currentTime = time.seconds
-            self.updateNowPlayingPlaybackState()
+            // 绝不在此处高频刷 nowPlayingInfo，苹果系统依靠 rate 和 elapsed 自动由 mediaserverd 本地推演时间，高频刷会导致控制中心崩溃丢弃注册
         }
     }
 
@@ -375,11 +375,14 @@ final class AudioPlayerManager: ObservableObject {
         loadedTimeRangesObserver = nil
     }
 
-    // MARK: - 锁屏控制
+    // MARK: - 苹果控制中心与锁屏控制 (MPRemoteCommandCenter & MPNowPlayingInfoCenter)
 
     private func setupRemoteCommandCenter() {
         let commandCenter = MPRemoteCommandCenter.shared()
 
+        // 1. 播放命令
+        commandCenter.playCommand.isEnabled = true
+        commandCenter.playCommand.removeTarget(nil)
         commandCenter.playCommand.addTarget { [weak self] _ in
             guard let self = self else { return .commandFailed }
             if !self.isPlaying {
@@ -389,6 +392,9 @@ final class AudioPlayerManager: ObservableObject {
             return .commandFailed
         }
 
+        // 2. 暂停命令
+        commandCenter.pauseCommand.isEnabled = true
+        commandCenter.pauseCommand.removeTarget(nil)
         commandCenter.pauseCommand.addTarget { [weak self] _ in
             guard let self = self else { return .commandFailed }
             if self.isPlaying {
@@ -398,11 +404,17 @@ final class AudioPlayerManager: ObservableObject {
             return .commandFailed
         }
 
+        // 3. 播放/暂停双向切换
+        commandCenter.togglePlayPauseCommand.isEnabled = true
+        commandCenter.togglePlayPauseCommand.removeTarget(nil)
         commandCenter.togglePlayPauseCommand.addTarget { [weak self] _ in
             self?.togglePlayPause()
             return .success
         }
 
+        // 4. 进度条拖动与点击调整 (Seek)
+        commandCenter.changePlaybackPositionCommand.isEnabled = true
+        commandCenter.changePlaybackPositionCommand.removeTarget(nil)
         commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let self = self, let positionEvent = event as? MPChangePlaybackPositionCommandEvent else {
                 return .commandFailed
@@ -410,23 +422,89 @@ final class AudioPlayerManager: ObservableObject {
             self.seek(to: positionEvent.positionTime)
             return .success
         }
+
+        // 5. 快进 15 秒
+        commandCenter.skipForwardCommand.isEnabled = true
+        commandCenter.skipForwardCommand.preferredIntervals = [15]
+        commandCenter.skipForwardCommand.removeTarget(nil)
+        commandCenter.skipForwardCommand.addTarget { [weak self] _ in
+            self?.skip(by: 15)
+            return .success
+        }
+
+        // 6. 快退 15 秒
+        commandCenter.skipBackwardCommand.isEnabled = true
+        commandCenter.skipBackwardCommand.preferredIntervals = [15]
+        commandCenter.skipBackwardCommand.removeTarget(nil)
+        commandCenter.skipBackwardCommand.addTarget { [weak self] _ in
+            self?.skip(by: -15)
+            return .success
+        }
     }
 
     private func setupNowPlayingInfo() {
         var nowPlayingInfo = [String: Any]()
         nowPlayingInfo[MPMediaItemPropertyTitle] = currentTitle
-        nowPlayingInfo[MPMediaItemPropertyArtist] = "AudioBooster 增益放大 (\(String(format: "%.1f", boostMultiplier))x)"
+        nowPlayingInfo[MPMediaItemPropertyArtist] = "AudioBooster · \(String(format: "%.1f", boostMultiplier))x 增益"
+        nowPlayingInfo[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.audio.rawValue
+        nowPlayingInfo[MPNowPlayingInfoPropertyIsLiveStream] = false
         nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
-        nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
+
+        if duration > 0 && !duration.isNaN && !duration.isInfinite {
+            nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
+        }
+
         nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
 
+        if let artwork = createDefaultArtwork() {
+            nowPlayingInfo[MPMediaItemPropertyArtwork] = artwork
+        }
+
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+        if #available(iOS 13.0, *) {
+            MPNowPlayingInfoCenter.default().playbackState = isPlaying ? .playing : .paused
+        }
     }
 
     private func updateNowPlayingPlaybackState() {
-        guard var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo else { return }
+        guard var nowPlayingInfo = MPNowPlayingInfoCenter.default().nowPlayingInfo else {
+            setupNowPlayingInfo()
+            return
+        }
+
         nowPlayingInfo[MPNowPlayingInfoPropertyElapsedPlaybackTime] = currentTime
+        if duration > 0 && !duration.isNaN && !duration.isInfinite {
+            nowPlayingInfo[MPMediaItemPropertyPlaybackDuration] = duration
+        }
         nowPlayingInfo[MPNowPlayingInfoPropertyPlaybackRate] = isPlaying ? 1.0 : 0.0
+
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nowPlayingInfo
+        if #available(iOS 13.0, *) {
+            MPNowPlayingInfoCenter.default().playbackState = isPlaying ? .playing : .paused
+        }
+    }
+
+    private func createDefaultArtwork() -> MPMediaItemArtwork? {
+        let size = CGSize(width: 512, height: 512)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let img = renderer.image { ctx in
+            // 绘制极简曜石深蓝渐变
+            let colors = [
+                UIColor(red: 0.12, green: 0.16, blue: 0.28, alpha: 1.0).cgColor,
+                UIColor(red: 0.05, green: 0.07, blue: 0.14, alpha: 1.0).cgColor
+            ]
+            let space = CGColorSpaceCreateDeviceRGB()
+            if let gradient = CGGradient(colorsSpace: space, colors: colors as CFArray, locations: [0.0, 1.0]) {
+                ctx.cgContext.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: size.width, y: size.height), options: [])
+            }
+
+            // 绘制高亮纯白音符
+            let config = UIImage.SymbolConfiguration(pointSize: 200, weight: .semibold)
+            if let symbol = UIImage(systemName: "music.note", withConfiguration: config)?.withTintColor(.white, renderingMode: .alwaysOriginal) {
+                let origin = CGPoint(x: (size.width - symbol.size.width) / 2, y: (size.height - symbol.size.height) / 2)
+                symbol.draw(at: origin)
+            }
+        }
+        return MPMediaItemArtwork(boundsSize: size) { _ in img }
     }
 }
