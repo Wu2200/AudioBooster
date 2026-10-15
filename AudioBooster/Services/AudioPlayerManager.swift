@@ -9,6 +9,7 @@ final class AudioPlayerManager: ObservableObject {
     @Published var isPlaying: Bool = false
     @Published var currentTime: Double = 0
     @Published var duration: Double = 0
+    @Published var bufferedTime: Double = 0
     @Published var currentTitle: String = "未加载音频"
     @Published var currentURLString: String = ""
     @Published var boostMultiplier: Float = 1.0 {
@@ -27,6 +28,7 @@ final class AudioPlayerManager: ObservableObject {
     private var statusObserver: NSKeyValueObservation?
     private var bufferEmptyObserver: NSKeyValueObservation?
     private var likelyToKeepUpObserver: NSKeyValueObservation?
+    private var loadedTimeRangesObserver: NSKeyValueObservation?
 
     private init() {
         setupRemoteCommandCenter()
@@ -36,50 +38,64 @@ final class AudioPlayerManager: ObservableObject {
         removeObservers()
     }
 
-    // MARK: - 播放控制
+    // MARK: - 播放控制 (异步非阻塞，保证外部跳转 UI 丝滑流畅)
 
     func loadAndPlay(urlString: String, title: String? = nil, initialBoost: Float? = nil) {
-        guard let encodedURLString = urlString.trimmingCharacters(in: .whitespacesAndNewlines).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? URL(string: urlString)?.absoluteString,
+        let cleanURLString = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let encodedURLString = cleanURLString.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? URL(string: cleanURLString)?.absoluteString,
               let url = URL(string: encodedURLString) else {
             self.errorMessage = "无效的音频链接"
             return
         }
 
-        self.currentURLString = urlString
+        // 立即在主线程更新 UI 状态，不产生任何卡顿
+        self.currentURLString = cleanURLString
         if let title = title, !title.isEmpty {
             self.currentTitle = title
         } else {
             let lastComp = url.lastPathComponent
             self.currentTitle = lastComp.isEmpty ? "网络音频" : lastComp
         }
+
         if let boost = initialBoost {
             self.boostMultiplier = max(1.0, min(boost, 4.0))
         }
 
+        self.currentTime = 0
+        self.bufferedTime = 0
+        self.duration = 0
         self.isBuffering = true
         self.errorMessage = nil
-
-        removeObservers()
-
-        let asset = AVURLAsset(url: url)
-        let item = AVPlayerItem(asset: asset)
-        self.playerItem = item
-
-        if player == nil {
-            player = AVPlayer(playerItem: item)
-        } else {
-            player?.replaceCurrentItem(with: item)
-        }
-
-        setupItemObservers(for: item)
-        setupTimeObserver()
-        applyVolumeBoost()
-
-        player?.play()
         self.isPlaying = true
 
-        notifyUser(message: "正在播放: \(self.currentTitle)")
-        setupNowPlayingInfo()
+        notifyUser(message: "正在载入: \(self.currentTitle)")
+
+        // 异步后台初始化网络资源，避免外部跳转时阻塞主线程
+        let targetURLString = cleanURLString
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let asset = AVURLAsset(url: url)
+            let item = AVPlayerItem(asset: asset)
+
+            DispatchQueue.main.async {
+                guard let self = self, self.currentURLString == targetURLString else { return }
+
+                self.removeObservers()
+                self.playerItem = item
+
+                if self.player == nil {
+                    self.player = AVPlayer(playerItem: item)
+                } else {
+                    self.player?.replaceCurrentItem(with: item)
+                }
+
+                self.setupItemObservers(for: item)
+                self.setupTimeObserver()
+                self.applyVolumeBoost()
+
+                self.player?.play()
+                self.setupNowPlayingInfo()
+            }
+        }
     }
 
     func togglePlayPause() {
@@ -96,8 +112,10 @@ final class AudioPlayerManager: ObservableObject {
 
     func seek(to seconds: Double) {
         guard let player = player else { return }
-        let targetTime = CMTime(seconds: seconds, preferredTimescale: 600)
-        player.seek(to: targetTime) { [weak self] _ in
+        let clampedSeconds = max(0, min(seconds, max(0.1, duration)))
+        self.currentTime = clampedSeconds
+        let targetTime = CMTime(seconds: clampedSeconds, preferredTimescale: 600)
+        player.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             self?.updateNowPlayingPlaybackState()
         }
     }
@@ -112,11 +130,9 @@ final class AudioPlayerManager: ObservableObject {
     func applyVolumeBoost() {
         guard let currentItem = player?.currentItem else { return }
 
-        // Apple 官方规范：通过 AVMutableAudioMix 设置 volume 大于 1.0 即可实现音频信号硬件/底层增益放大（Amplification）
         let audioMix = AVMutableAudioMix()
-
-        // 查找音频音轨或全音轨参数
         let tracks = currentItem.asset.tracks(withMediaType: .audio)
+
         if !tracks.isEmpty {
             var params: [AVMutableAudioMixInputParameters] = []
             for track in tracks {
@@ -126,16 +142,12 @@ final class AudioPlayerManager: ObservableObject {
             }
             audioMix.inputParameters = params
         } else {
-            // 通用音轨处理
             let inputParam = AVMutableAudioMixInputParameters()
             inputParam.setVolume(self.boostMultiplier, at: .zero)
             audioMix.inputParameters = [inputParam]
         }
 
-        // 应用到当前播放项
         currentItem.audioMix = audioMix
-
-        // 保持播放器主通道最大音量，由 AudioMix 进行倍数放大
         player?.volume = 1.0
     }
 
@@ -161,7 +173,7 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
-    // MARK: - 监听机制
+    // MARK: - 监听机制 (包含预载/缓冲进度监听)
 
     private func setupItemObservers(for item: AVPlayerItem) {
         statusObserver = item.observe(\.status, options: [.new, .initial]) { [weak self] currentItem, _ in
@@ -186,6 +198,17 @@ final class AudioPlayerManager: ObservableObject {
             }
         }
 
+        // 监听预载/已缓冲时间范围
+        loadedTimeRangesObserver = item.observe(\.loadedTimeRanges, options: [.new]) { [weak self] currentItem, _ in
+            guard let range = currentItem.loadedTimeRanges.first?.timeRangeValue else { return }
+            let start = CMTimeGetSeconds(range.start)
+            let duration = CMTimeGetSeconds(range.duration)
+            let loaded = max(0, start + duration)
+            DispatchQueue.main.async {
+                self?.bufferedTime = loaded
+            }
+        }
+
         bufferEmptyObserver = item.observe(\.isPlaybackBufferEmpty, options: [.new]) { [weak self] _, _ in
             DispatchQueue.main.async {
                 self?.isBuffering = true
@@ -207,7 +230,7 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     private func setupTimeObserver() {
-        let interval = CMTime(seconds: 0.5, preferredTimescale: 600)
+        let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
         timeObserverToken = player?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
             guard let self = self else { return }
             self.currentTime = time.seconds
@@ -226,6 +249,8 @@ final class AudioPlayerManager: ObservableObject {
         bufferEmptyObserver = nil
         likelyToKeepUpObserver?.invalidate()
         likelyToKeepUpObserver = nil
+        loadedTimeRangesObserver?.invalidate()
+        loadedTimeRangesObserver = nil
     }
 
     // MARK: - 锁屏控制与 NowPlaying
