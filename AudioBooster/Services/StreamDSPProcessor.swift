@@ -34,7 +34,7 @@ private func streamTapProcess(
     let status = MTAudioProcessingTapGetSourceAudio(tap, numberFrames, bufferListInOut, flagsOut, nil, numberFramesOut)
     guard status == noErr else { return }
 
-    guard let clientInfo = MTAudioProcessingTapGetStorage(tap) else { return }
+    let clientInfo = MTAudioProcessingTapGetStorage(tap)
     let processor = Unmanaged<StreamDSPProcessor>.fromOpaque(clientInfo).takeUnretainedValue()
     processor.processBufferList(bufferListInOut, frames: Int(numberFramesOut.pointee))
 }
