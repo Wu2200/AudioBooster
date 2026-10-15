@@ -2,76 +2,72 @@ import math
 import os
 from PIL import Image, ImageDraw, ImageFilter
 
-def create_app_icon():
+def create_minimal_app_icon():
     size = (1024, 1024)
-    # 1. 底图：深邃科技午夜蓝深色渐变
-    img = Image.new("RGBA", size, (10, 15, 30, 255))
+    # 1. 底图：极简纯净的深空黑微质感微渐变 (Apple 风格暗色调)
+    img = Image.new("RGBA", size, (18, 19, 23, 255))
     draw = ImageDraw.Draw(img)
 
     for y in range(1024):
         t = y / 1024.0
-        # 从顶部的优雅深蓝紫到下方的午夜深黑
-        r = int(15 * (1 - t) + 4 * t)
-        g = int(28 * (1 - t) + 8 * t)
-        b = int(58 * (1 - t) + 16 * t)
+        # 从顶部的优雅深空墨黑微蓝到下方的深邃曜石黑
+        r = int(24 * (1 - t) + 12 * t)
+        g = int(26 * (1 - t) + 14 * t)
+        b = int(32 * (1 - t) + 18 * t)
         draw.line([(0, y), (1024, y)], fill=(r, g, b, 255))
 
-    # 2. 中心发光扩散光晕 (声场能量)
+    # 2. 居中微弱柔和环境光 (仅营造层次感，不刺眼)
     glow = Image.new("RGBA", size, (0, 0, 0, 0))
     glow_draw = ImageDraw.Draw(glow)
-    glow_draw.ellipse([260, 260, 764, 764], fill=(30, 110, 255, 90))
-    glow = glow.filter(ImageFilter.GaussianBlur(70))
+    glow_draw.ellipse([300, 300, 724, 724], fill=(0, 122, 255, 30))
+    glow = glow.filter(ImageFilter.GaussianBlur(80))
     img = Image.alpha_composite(img, glow)
     draw = ImageDraw.Draw(img)
 
-    # 3. 绘制 2x, 3x, 4x 环形突破声浪弧线
-    # 弧度中心位于扬声器号角出口前偏左位置
-    center_x, center_y = 520, 512
+    # 3. 极简现代几何主体：纯白极简扬声器 (Minimalist Speaker)
+    # 极简扬声器后座 (圆角矩形)
+    draw.rounded_rectangle([250, 412, 380, 612], radius=28, fill=(255, 255, 255, 255))
 
-    def draw_curved_wave(r, width, color):
-        box = [center_x - r, center_y - r, center_x + r, center_y + r]
-        draw.arc(box, start=-50, end=50, fill=color, width=width)
-
-    # 1x/2x 科技炫蓝
-    draw_curved_wave(r=170, width=28, color=(40, 150, 255, 240))
-    # 3x 强力橙黄
-    draw_curved_wave(r=260, width=32, color=(255, 160, 20, 240))
-    # 4x 极限猩红突破
-    draw_curved_wave(r=350, width=36, color=(255, 50, 70, 240))
-
-    # 4. 绘制质感扬声器主体 (白色极简现代设计)
-    # 扬声器后座方块
-    draw.rounded_rectangle([200, 390, 360, 634], radius=24, fill=(245, 248, 255, 255))
-
-    # 扬声器扩散锥体 (扩音号角)
+    # 极简扬声器喇叭口 (规整梯形几何体)
     cone_points = [
-        (360, 390),
-        (540, 250),
-        (540, 774),
-        (360, 634)
+        (380, 412),
+        (540, 292),
+        (540, 732),
+        (380, 612)
     ]
     draw.polygon(cone_points, fill=(255, 255, 255, 255))
-    # 号角口微弧立体边缘
-    draw.ellipse([518, 250, 562, 774], fill=(235, 242, 255, 255))
+    # 扬声器前缘微圆角修饰
+    draw.rounded_rectangle([520, 292, 544, 732], radius=12, fill=(255, 255, 255, 255))
 
-    # 5. 扬声器内部嵌入金色增益突破闪电 (Boost Lightning Bolt)
-    bolt_points = [
-        (380, 365),
-        (300, 505),
-        (365, 505),
-        (320, 660),
-        (455, 485),
-        (385, 485)
-    ]
-    draw.polygon(bolt_points, fill=(255, 205, 0, 255))
+    # 4. 纯净极简声波弧线 (两道优雅平滑圆弧，纯白半透明层次)
+    center_x, center_y = 480, 512
 
-    # 6. 转为标准 24-bit RGB (符合苹果规范，无透明通道)
+    def draw_minimal_wave(r, stroke, alpha):
+        wave_layer = Image.new("RGBA", size, (0, 0, 0, 0))
+        w_draw = ImageDraw.Draw(wave_layer)
+        box = [center_x - r, center_y - r, center_x + r, center_y + r]
+        w_draw.arc(box, start=-40, end=40, fill=(255, 255, 255, alpha), width=stroke)
+        return wave_layer
+
+    # 第一道轻量内弧
+    wave1 = draw_minimal_wave(r=180, stroke=26, alpha=235)
+    img = Image.alpha_composite(img, wave1)
+
+    # 第二道扩散外弧
+    wave2 = draw_minimal_wave(r=275, stroke=24, alpha=170)
+    img = Image.alpha_composite(img, wave2)
+
+    # 第三道点睛轻波 (代表突破增益)
+    wave3 = draw_minimal_wave(r=370, stroke=22, alpha=100)
+    img = Image.alpha_composite(img, wave3)
+
+    # 5. 转为标准 24-bit RGB (符合苹果规范，无透明通道)
     final_img = img.convert("RGB")
 
     os.makedirs("AudioBooster/Assets.xcassets/AppIcon.appiconset", exist_ok=True)
     out_path = "AudioBooster/Assets.xcassets/AppIcon.appiconset/icon-1024.png"
     final_img.save(out_path, "PNG")
-    print(f"成功生成高清 App 图标: {out_path} ({os.path.getsize(out_path)} 字节)")
+    print(f"成功生成极简风 App 图标: {out_path} ({os.path.getsize(out_path)} 字节)")
 
 if __name__ == "__main__":
-    create_app_icon()
+    create_minimal_app_icon()
