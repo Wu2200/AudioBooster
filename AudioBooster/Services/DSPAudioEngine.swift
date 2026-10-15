@@ -7,7 +7,6 @@ final class DSPAudioEngine {
     private let playerNode = AVAudioPlayerNode()
     private let eqNode = AVAudioUnitEQ(numberOfBands: 3)
     private let reverbNode = AVAudioUnitReverb()
-    private let dynamicsNode = AVAudioUnitDynamicsProcessor()
     private let volumeNode = AVAudioMixerNode()
 
     // MARK: - 文件与时间追踪
@@ -51,15 +50,13 @@ final class DSPAudioEngine {
         engine.attach(playerNode)
         engine.attach(eqNode)
         engine.attach(reverbNode)
-        engine.attach(dynamicsNode)
         engine.attach(volumeNode)
 
         // 连接节点链:
-        // PlayerNode -> EQNode (参数均衡器) -> ReverbNode (3D空间环绕) -> DynamicsNode (防爆音压限) -> VolumeNode (突破增益) -> mainMixerNode
+        // PlayerNode -> EQNode (参数均衡器) -> ReverbNode (3D空间环绕) -> VolumeNode (突破增益与混音) -> mainMixerNode
         engine.connect(playerNode, to: eqNode, format: nil)
         engine.connect(eqNode, to: reverbNode, format: nil)
-        engine.connect(reverbNode, to: dynamicsNode, format: nil)
-        engine.connect(dynamicsNode, to: volumeNode, format: nil)
+        engine.connect(reverbNode, to: volumeNode, format: nil)
         engine.connect(volumeNode, to: engine.mainMixerNode, format: nil)
 
         // 默认初始化 DSP 参数
@@ -69,7 +66,7 @@ final class DSPAudioEngine {
     }
 
     private func configureDefaultDSP() {
-        // 1. 初始化 3 段 EQ
+        // 1. 初始化 3 段硬件 EQ
         let band0 = eqNode.bands[0]
         band0.filterType = .highPass
         band0.frequency = 120.0
@@ -89,19 +86,13 @@ final class DSPAudioEngine {
 
         eqNode.bypass = true
 
-        // 2. 初始化 Reverb
+        // 2. 初始化 Reverb 空间化
         reverbNode.loadFactoryPreset(.mediumHall)
         reverbNode.wetDryMix = 0.0
         reverbNode.bypass = true
 
-        // 3. 初始化防爆音专业压限器
-        dynamicsNode.threshold = -18.0
-        dynamicsNode.headRoom = 5.0
-        dynamicsNode.expansionRatio = 2.0
-        dynamicsNode.attackTime = 0.001
-        dynamicsNode.releaseTime = 0.05
-        dynamicsNode.masterGain = 0.0
-        dynamicsNode.bypass = false
+        // 3. 初始音量
+        volumeNode.outputVolume = 1.0
     }
 
     // MARK: - 启动引擎
@@ -352,6 +343,8 @@ final class DSPAudioEngine {
             band1.bypass = false
 
             let band2 = eqNode.bands[2]
+            band2.filterType = .lowPass
+            band2.frequency = 7500.0
             band2.bypass = true
 
             eqNode.bypass = false
@@ -392,22 +385,13 @@ final class DSPAudioEngine {
 
     // MARK: - 音量突破与防爆音压限控制
     func setBoostMultiplier(_ mult: Float, isLimiterEnabled: Bool) {
-        // volumeNode 负责音量突破放大 (1.0x ~ 4.0x)
-        volumeNode.outputVolume = mult
-
-        if isLimiterEnabled {
-            // 当音量突破大音量时，压限器自动介入，防止爆音
-            dynamicsNode.bypass = false
-            if mult > 2.0 {
-                let excess = mult - 2.0
-                dynamicsNode.threshold = Float(-18.0 - (Double(excess) * 3.0))
-                dynamicsNode.headRoom = 4.0
-            } else {
-                dynamicsNode.threshold = -18.0
-                dynamicsNode.headRoom = 5.0
-            }
+        if isLimiterEnabled && mult > 2.0 {
+            // 双曲正切平滑饱和软压限，防止大音量破音
+            let excess = mult - 2.0
+            let compressedExcess = Float(tanh(Double(excess) / 1.8)) * 1.6
+            volumeNode.outputVolume = 2.0 + compressedExcess
         } else {
-            dynamicsNode.bypass = true
+            volumeNode.outputVolume = mult
         }
     }
 }
