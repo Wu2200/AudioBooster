@@ -19,9 +19,8 @@ struct ASMRImmersionCard: View {
                 HStack(spacing: 4) {
                     Image(systemName: playerManager.asmrMode.icon)
                     Text(playerManager.asmrMode.rawValue)
+                        .font(.caption.bold())
                 }
-                .font(.caption)
-                .fontWeight(.bold)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .background(Color.purple.opacity(0.16))
@@ -40,8 +39,7 @@ struct ASMRImmersionCard: View {
                                 Image(systemName: mode.icon)
                                     .font(.subheadline)
                                 Text(mode.rawValue)
-                                    .font(.subheadline)
-                                    .fontWeight(.bold)
+                                    .font(.subheadline.bold())
                                 Spacer()
                                 if playerManager.asmrMode == mode {
                                     Image(systemName: "checkmark.circle.fill")
@@ -79,7 +77,6 @@ struct ASMRImmersionCard: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("睡眠定时关播")
                                 .font(.subheadline)
-                                .fontWeight(.medium)
                             if playerManager.sleepTimerMinutes > 0 {
                                 Text("剩余: \(formatSeconds(playerManager.sleepTimerRemainingSeconds)) (到期平滑渐弱)")
                                     .font(.system(size: 11, design: .monospaced))
@@ -115,7 +112,6 @@ struct ASMRImmersionCard: View {
                         HStack(spacing: 4) {
                             Text(playerManager.sleepTimerMinutes == 0 ? "已关闭" : "\(playerManager.sleepTimerMinutes) 分钟")
                                 .font(.subheadline)
-                                .fontWeight(.medium)
                             Image(systemName: "chevron.up.chevron.down")
                                 .font(.caption2)
                         }
@@ -132,7 +128,6 @@ struct ASMRImmersionCard: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("无缝单曲循环")
                             .font(.subheadline)
-                            .fontWeight(.medium)
                         Text("ASMR 与白噪音播放完毕自动重头起播")
                             .font(.caption2)
                             .foregroundColor(.secondary)
@@ -145,7 +140,6 @@ struct ASMRImmersionCard: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("防爆音软压限保护")
                             .font(.subheadline)
-                            .fontWeight(.medium)
                         Text("大音量突破下自动平滑突发碰撞与喷麦破音")
                             .font(.caption2)
                             .foregroundColor(.secondary)
