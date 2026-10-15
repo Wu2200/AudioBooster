@@ -3,7 +3,7 @@ import AVFoundation
 import MediaToolbox
 import CoreMedia
 
-// MARK: - CoreAudio C-Style Callbacks for MTAudioProcessingTap
+// MARK: - CoreAudio C-Style 回调函数 (MTAudioProcessingTap 实时音频流抽头)
 
 private func streamTapInit(
     tap: MTAudioProcessingTap,
@@ -39,44 +39,77 @@ private func streamTapProcess(
     processor.processBufferList(bufferListInOut, frames: Int(numberFramesOut.pointee))
 }
 
-// MARK: - 实时流媒体 DSP 音频处理器 (人声/喘息声/综合 ASMR 声学调谐矩阵)
+// MARK: - 实时流媒体 DSP 音频处理器 (综合全感 / 呼吸贴耳 / 经典 3D 空间环绕)
 
 final class StreamDSPProcessor {
     static let shared = StreamDSPProcessor()
 
-    // 实时参数 (实时音频线程直接读取生效，零延迟)
+    // 实时控制参数 (音频实时线程直接读取，零锁开销)
     var boostMultiplier: Float = 1.0
     var isLimiterEnabled: Bool = true
-    var asmrMode: ASMREffectMode = .standard
+    var asmrMode: ASMREffectMode = .allInOne
 
-    // MARK: - 内部声学滤波器状态量 (预分配常驻内存，零 GC)
-    // 呼吸贴耳 (Whisper & Breath Air EQ)
+    // MARK: - 1. 呼吸贴耳与综合滤波状态 (IIR 一阶分频与微动态)
     private var breathFilterL: Float = 0.0
     private var breathFilterR: Float = 0.0
+    private var warmCoreL: Float = 0.0
+    private var warmCoreR: Float = 0.0
 
-    // 温软慢语 (Warm Vocal & Tube Saturation)
-    private var warmFilterL: Float = 0.0
-    private var warmFilterR: Float = 0.0
+    // 软噪声门平滑包络 (底噪软净化)
+    private var noiseEnvelope: Float = 0.0
 
-    // 双耳包裹 (Mid/Side 空间声学立体声漫射)
-    private let sideDelayCapacity = 2048
-    private var sideDelayBuffer: [Float]
-    private var sideDelayWriteIndex: Int = 0
-    private let sideDelayOffset: Int = 520 // 约 11.8ms 空间泛音漫射
+    // MARK: - 2. 经典 3D 空间环绕声学混响矩阵 (Schroeder 声学梳状与全通网络)
+    // 梳状滤波器缓冲区 (4路不同质数延迟，消除驻波与金属染色)
+    private let comb1Cap = 1116 // ~25.3ms
+    private let comb2Cap = 1356 // ~30.7ms
+    private let comb3Cap = 1422 // ~32.2ms
+    private let comb4Cap = 1617 // ~36.6ms
+    private var comb1Buf: [Float]
+    private var comb2Buf: [Float]
+    private var comb3Buf: [Float]
+    private var comb4Buf: [Float]
+    private var comb1Idx: Int = 0
+    private var comb2Idx: Int = 0
+    private var comb3Idx: Int = 0
+    private var comb4Idx: Int = 0
+
+    // 全通滤波器缓冲区 (2路空间相位立体声漫射)
+    private let ap1Cap = 556 // ~12.6ms
+    private let ap2Cap = 441 // ~10.0ms
+    private var ap1Buf: [Float]
+    private var ap2Buf: [Float]
+    private var ap1Idx: Int = 0
+    private var ap2Idx: Int = 0
 
     private init() {
-        self.sideDelayBuffer = [Float](repeating: 0.0, count: sideDelayCapacity)
+        self.comb1Buf = [Float](repeating: 0.0, count: comb1Cap)
+        self.comb2Buf = [Float](repeating: 0.0, count: comb2Cap)
+        self.comb3Buf = [Float](repeating: 0.0, count: comb3Cap)
+        self.comb4Buf = [Float](repeating: 0.0, count: comb4Cap)
+        self.ap1Buf = [Float](repeating: 0.0, count: ap1Cap)
+        self.ap2Buf = [Float](repeating: 0.0, count: ap2Cap)
     }
 
     func resetStates() {
-        sideDelayBuffer.withUnsafeMutableBufferPointer { ptr in
-            ptr.initialize(repeating: 0.0)
-        }
-        sideDelayWriteIndex = 0
         breathFilterL = 0.0
         breathFilterR = 0.0
-        warmFilterL = 0.0
-        warmFilterR = 0.0
+        warmCoreL = 0.0
+        warmCoreR = 0.0
+        noiseEnvelope = 0.0
+
+        comb1Buf.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0.0) }
+        comb2Buf.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0.0) }
+        comb3Buf.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0.0) }
+        comb4Buf.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0.0) }
+        ap1Buf.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0.0) }
+        ap2Buf.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0.0) }
+
+        comb1Idx = 0
+        comb2Idx = 0
+        comb3Idx = 0
+        comb4Idx = 0
+        ap1Idx = 0
+        ap2Idx = 0
     }
 
     func makeTap() -> MTAudioProcessingTap? {
@@ -111,52 +144,9 @@ final class StreamDSPProcessor {
            let ptrR = buffers[1].mData?.assumingMemoryBound(to: Float.self) {
             // 双声道非交错 (Non-interleaved)
             for i in 0..<frames {
-                var sL = ptrL[i]
-                var sR = ptrR[i]
-
-                switch mode {
-                case .standard:
-                    break
-
-                case .whisperBreath:
-                    // 【呼吸贴耳】：聚焦 3.5kHz~8kHz 近场呼吸、气流与唇齿音，保留胸腔温暖基频
-                    let alpha: Float = 0.35
-                    breathFilterL += alpha * (sL - breathFilterL)
-                    breathFilterR += alpha * (sR - breathFilterR)
-                    let airL = sL - breathFilterL
-                    let airR = sR - breathFilterR
-                    // 保持人声主体 (breathFilter) 饱满不薄，将微弱呼吸气流 (air) 提亮 +4.5dB
-                    sL = breathFilterL + 1.68 * airL
-                    sR = breathFilterR + 1.68 * airR
-
-                case .warmIntimate:
-                    // 【温软慢语】：电子管偶次微谐波包浆 + 平滑齿音滚降，软糯温润易眠
-                    let satL = sL + 0.08 * (sL * sL) * (sL >= 0 ? 1.0 : -1.0)
-                    let satR = sR + 0.08 * (sR * sR) * (sR >= 0 ? 1.0 : -1.0)
-                    let beta: Float = 0.62
-                    warmFilterL += beta * (satL - warmFilterL)
-                    warmFilterR += beta * (satR - warmFilterR)
-                    sL = 0.82 * warmFilterL + 0.18 * satL
-                    sR = 0.82 * warmFilterR + 0.18 * satR
-
-                case .binauralAir:
-                    // 【双耳包裹】：M/S 空间扩展，Mid(正中人声喘息) 100% 保持在耳旁绝不相消，Side(空气泛音) 拓宽包裹
-                    let mid = (sL + sR) * 0.5
-                    let side = (sL - sR) * 0.5
-
-                    let rIdx = (sideDelayWriteIndex - sideDelayOffset + sideDelayCapacity) % sideDelayCapacity
-                    let delayedSide = sideDelayBuffer[rIdx]
-                    sideDelayBuffer[sideDelayWriteIndex] = side
-                    sideDelayWriteIndex = (sideDelayWriteIndex + 1) % sideDelayCapacity
-
-                    let expandedSide = side * 1.30 + delayedSide * 0.20
-                    sL = mid + expandedSide
-                    sR = mid - expandedSide
-                }
-
-                // 1x ~ 8x 强力突破放大与双曲正切防爆音软压限
-                ptrL[i] = applyLimit(sL * currentBoost, enabled: useLimiter)
-                ptrR[i] = applyLimit(sR * currentBoost, enabled: useLimiter)
+                var (outL, outR) = processSample(sL: ptrL[i], sR: ptrR[i], mode: mode)
+                ptrL[i] = applyLimit(outL * currentBoost, enabled: useLimiter)
+                ptrR[i] = applyLimit(outR * currentBoost, enabled: useLimiter)
             }
         } else if buffers.count == 1,
                   let ptr = buffers[0].mData?.assumingMemoryBound(to: Float.self) {
@@ -166,74 +156,135 @@ final class StreamDSPProcessor {
                 for i in 0..<frames {
                     let idxL = i * 2
                     let idxR = i * 2 + 1
-                    var sL = ptr[idxL]
-                    var sR = ptr[idxR]
-
-                    switch mode {
-                    case .standard:
-                        break
-                    case .whisperBreath:
-                        let alpha: Float = 0.35
-                        breathFilterL += alpha * (sL - breathFilterL)
-                        breathFilterR += alpha * (sR - breathFilterR)
-                        let airL = sL - breathFilterL
-                        let airR = sR - breathFilterR
-                        sL = breathFilterL + 1.68 * airL
-                        sR = breathFilterR + 1.68 * airR
-                    case .warmIntimate:
-                        let satL = sL + 0.08 * (sL * sL) * (sL >= 0 ? 1.0 : -1.0)
-                        let satR = sR + 0.08 * (sR * sR) * (sR >= 0 ? 1.0 : -1.0)
-                        let beta: Float = 0.62
-                        warmFilterL += beta * (satL - warmFilterL)
-                        warmFilterR += beta * (satR - warmFilterR)
-                        sL = 0.82 * warmFilterL + 0.18 * satL
-                        sR = 0.82 * warmFilterR + 0.18 * satR
-                    case .binauralAir:
-                        let mid = (sL + sR) * 0.5
-                        let side = (sL - sR) * 0.5
-                        let rIdx = (sideDelayWriteIndex - sideDelayOffset + sideDelayCapacity) % sideDelayCapacity
-                        let delayedSide = sideDelayBuffer[rIdx]
-                        sideDelayBuffer[sideDelayWriteIndex] = side
-                        sideDelayWriteIndex = (sideDelayWriteIndex + 1) % sideDelayCapacity
-                        let expandedSide = side * 1.30 + delayedSide * 0.20
-                        sL = mid + expandedSide
-                        sR = mid - expandedSide
-                    }
-
-                    ptr[idxL] = applyLimit(sL * currentBoost, enabled: useLimiter)
-                    ptr[idxR] = applyLimit(sR * currentBoost, enabled: useLimiter)
+                    var (outL, outR) = processSample(sL: ptr[idxL], sR: ptr[idxR], mode: mode)
+                    ptr[idxL] = applyLimit(outL * currentBoost, enabled: useLimiter)
+                    ptr[idxR] = applyLimit(outR * currentBoost, enabled: useLimiter)
                 }
             } else if channels == 1 {
                 // 单声道 (Mono)
                 for i in 0..<frames {
-                    var s = ptr[i]
-                    switch mode {
-                    case .standard:
-                        break
-                    case .whisperBreath:
-                        let alpha: Float = 0.35
-                        breathFilterL += alpha * (s - breathFilterL)
-                        let air = s - breathFilterL
-                        s = breathFilterL + 1.68 * air
-                    case .warmIntimate:
-                        let sat = s + 0.08 * (s * s) * (s >= 0 ? 1.0 : -1.0)
-                        warmFilterL += 0.62 * (sat - warmFilterL)
-                        s = 0.82 * warmFilterL + 0.18 * sat
-                    case .binauralAir:
-                        break
-                    }
-                    ptr[i] = applyLimit(s * currentBoost, enabled: useLimiter)
+                    let (outL, _) = processSample(sL: ptr[i], sR: ptr[i], mode: mode)
+                    ptr[i] = applyLimit(outL * currentBoost, enabled: useLimiter)
                 }
             }
         }
     }
 
+    // MARK: - 核心多模式声学渲染管线
+    @inline(__always)
+    private func processSample(sL: Float, sR: Float, mode: ASMREffectMode) -> (Float, Float) {
+        switch mode {
+        case .standard:
+            // 标准原声：原始采样直出
+            return (sL, sR)
+
+        case .allInOne:
+            // MARK: - 【综合全感】(呼吸贴耳 + 人声饱满 + 底噪软净化 + 临场微环绕)
+            // 1. 底噪软净化 (Soft Noise Expander Gate): 压制无声呼吸间歇的机器沙沙底噪
+            let energy = abs(sL) + abs(sR)
+            noiseEnvelope += 0.05 * (energy - noiseEnvelope)
+            let gateGain: Float = (noiseEnvelope < 0.006) ? 0.82 : 1.0
+
+            let gatedL = sL * gateGain
+            let gatedR = sR * gateGain
+
+            // 2. 呼吸与气流细节提亮 (Air EQ): 提取 3.5kHz~8kHz 细腻气流喘息
+            let alpha: Float = 0.32
+            breathFilterL += alpha * (gatedL - breathFilterL)
+            breathFilterR += alpha * (gatedR - breathFilterR)
+            let airL = gatedL - breathFilterL
+            let airR = gatedR - breathFilterR
+
+            // 3. 人声核心温暖感 (Warm Core): 微量偶次谐波防止人声变单薄
+            let warmL = breathFilterL + 0.05 * (breathFilterL * breathFilterL) * (breathFilterL >= 0 ? 1.0 : -1.0)
+            let warmR = breathFilterR + 0.05 * (breathFilterR * breathFilterR) * (breathFilterR >= 0 ? 1.0 : -1.0)
+
+            // 4. 临场轻空间包裹 (Subtle Ambient Wrap): 提取侧边泛音做极微量空间润色
+            let mid = (warmL + warmR) * 0.5
+            let side = (warmL - warmR) * 0.5
+            let revSide = computeCombReverb(input: side) * 0.18
+
+            let finalL = (mid + warmL * 0.5) + (side * 1.15 + revSide) + 1.45 * airL
+            let finalR = (mid + warmR * 0.5) - (side * 1.15 - revSide) + 1.45 * airR
+            return (finalL, finalR)
+
+        case .whisperBreath:
+            // MARK: - 【呼吸贴耳】(强力凸显耳语、喘息起伏与近距唇齿微动态)
+            let alpha: Float = 0.38
+            breathFilterL += alpha * (sL - breathFilterL)
+            breathFilterR += alpha * (sR - breathFilterR)
+            let airL = sL - breathFilterL
+            let airR = sR - breathFilterR
+            // 保持人声主体自然，对呼吸微弱气流与唇齿音实施 +5.2dB 针对性聚焦
+            let outL = breathFilterL + 1.82 * airL
+            let outR = breathFilterR + 1.82 * airR
+            return (outL, outR)
+
+        case .spatial3D:
+            // MARK: - 【3D 空间环绕】(保留经典空间音频声场 · Schroeder 声学立体声混响模型)
+            // 通过 4 路质数梳状延迟 + 2 路全通漫射，制造真实开阔的大空间立体声混响声场
+            let inputMono = (sL + sR) * 0.5
+            let rev = computeSchroederReverb(input: inputMono)
+
+            // 干湿比混合: 72% 干声清晰人声 + 38% 空间环绕立体声漫射
+            let outL = sL * 0.72 + rev.0 * 0.38
+            let outR = sR * 0.72 + rev.1 * 0.38
+            return (outL, outR)
+        }
+    }
+
+    // MARK: - Schroeder 空间声学混响渲染算法 (经典 3D 空间音频)
+    @inline(__always)
+    private func computeSchroederReverb(input: Float) -> (Float, Float) {
+        // 4 路并行梳状延迟滤波 (反馈系数 ~0.785)
+        let c1Out = comb1Buf[comb1Idx]
+        comb1Buf[comb1Idx] = input + c1Out * 0.785
+        comb1Idx = (comb1Idx + 1) % comb1Cap
+
+        let c2Out = comb2Buf[comb2Idx]
+        comb2Buf[comb2Idx] = input + c2Out * 0.780
+        comb2Idx = (comb2Idx + 1) % comb2Cap
+
+        let c3Out = comb3Buf[comb3Idx]
+        comb3Buf[comb3Idx] = input + c3Out * 0.772
+        comb3Idx = (comb3Idx + 1) % comb3Cap
+
+        let c4Out = comb4Buf[comb4Idx]
+        comb4Buf[comb4Idx] = input + c4Out * 0.768
+        comb4Idx = (comb4Idx + 1) % comb4Cap
+
+        let combMix = (c1Out + c2Out + c3Out + c4Out) * 0.25
+
+        // 串联全通滤波器 1 (漫射系数 0.62)
+        let ap1Out = ap1Buf[ap1Idx] - 0.62 * combMix
+        ap1Buf[ap1Idx] = combMix + 0.62 * ap1Out
+        ap1Idx = (ap1Idx + 1) % ap1Cap
+
+        // 串联全通滤波器 2 (漫射系数 0.62)
+        let ap2Out = ap2Buf[ap2Idx] - 0.62 * ap1Out
+        ap2Buf[ap2Idx] = ap1Out + 0.62 * ap2Out
+        ap2Idx = (ap2Idx + 1) % ap2Cap
+
+        // 左右耳相位立体声扩散 (左耳以 c1/c3 为主，右耳以 c2/c4 为主)
+        let revL = ap2Out + (c1Out - c2Out) * 0.22
+        let revR = ap2Out + (c3Out - c4Out) * 0.22
+        return (revL, revR)
+    }
+
+    @inline(__always)
+    private func computeCombReverb(input: Float) -> Float {
+        let c1Out = comb1Buf[comb1Idx]
+        comb1Buf[comb1Idx] = input + c1Out * 0.65
+        comb1Idx = (comb1Idx + 1) % comb1Cap
+        return c1Out
+    }
+
+    // MARK: - 8.0x 极限大音量双曲正切软压限保护
     @inline(__always)
     private func applyLimit(_ sample: Float, enabled: Bool) -> Float {
         guard enabled else {
             return max(-1.0, min(1.0, sample))
         }
-        // 双曲正切平滑非线性饱和：当波形超过 0.72 时平滑压缩，保证 8x 强力放大且绝不破音
         let threshold: Float = 0.72
         if sample > threshold {
             return threshold + (1.0 - threshold) * tanhf((sample - threshold) / (1.0 - threshold))
