@@ -7,7 +7,7 @@ struct ASMRImmersionCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            // 头部标题（锁定单行，不放变宽标签，彻底杜绝折行与抖动）
+            // 头部标题
             HStack {
                 Label("ASMR 沉浸调音 & 助眠", systemImage: "headphones")
                     .font(.headline)
@@ -16,44 +16,114 @@ struct ASMRImmersionCard: View {
                 Spacer()
             }
 
-            // 4 大音效模式网格选择器（固定高度，杜绝尺寸跳变）
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                ForEach(ASMREffectMode.allCases) { mode in
-                    Button(action: {
-                        playerManager.setASMREffectMode(mode)
-                    }) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack {
-                                Image(systemName: mode.icon)
+            // MARK: - 播放双内核选择系统 (切换测试)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("播放内核选择 (可自由切换对比)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                HStack(spacing: 8) {
+                    ForEach(PlayerEngineType.allCases) { engine in
+                        Button(action: {
+                            playerManager.switchEngine(to: engine)
+                        }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: engine.icon)
                                     .font(.subheadline)
-                                Text(mode.rawValue)
-                                    .font(.subheadline.bold())
-                                    .lineLimit(1)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(engine.rawValue)
+                                        .font(.caption.bold())
+                                        .lineLimit(1)
+                                    Text(engine.badge)
+                                        .font(.system(size: 9))
+                                        .opacity(0.85)
+                                        .lineLimit(1)
+                                }
                                 Spacer()
-                                if playerManager.asmrMode == mode {
+                                if playerManager.currentEngineType == engine {
                                     Image(systemName: "checkmark.circle.fill")
                                         .font(.caption)
                                 }
                             }
-                            Text(mode.summary)
-                                .font(.system(size: 10))
-                                .opacity(0.85)
-                                .lineLimit(1)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, minHeight: 48, maxHeight: 48)
+                            .background(
+                                playerManager.currentEngineType == engine ?
+                                Color.blue : Color(UIColor.secondarySystemBackground)
+                            )
+                            .foregroundColor(
+                                playerManager.currentEngineType == engine ?
+                                .white : .primary
+                            )
+                            .cornerRadius(10)
                         }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, minHeight: 56, maxHeight: 56, alignment: .leading)
-                        .background(
-                            playerManager.asmrMode == mode ?
-                            Color.purple : Color(UIColor.secondarySystemBackground)
-                        )
-                        .foregroundColor(
-                            playerManager.asmrMode == mode ?
-                            .white : .primary
-                        )
-                        .cornerRadius(12)
+                        .buttonStyle(PlainButtonStyle())
                     }
-                    .buttonStyle(PlainButtonStyle())
+                }
+
+                // 如果处于 DSP 缓冲状态，提示下载进度
+                if let progressText = playerManager.dspBufferProgressText {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text(progressText)
+                            .font(.caption2)
+                            .foregroundColor(.blue)
+                    }
+                    .padding(.top, 2)
+                }
+            }
+
+            Divider()
+
+            // 4 大音效模式网格选择器（固定高度，杜绝尺寸跳变）
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("声学预设 (在 DSP 内核下享受硬件级滤波)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    ForEach(ASMREffectMode.allCases) { mode in
+                        Button(action: {
+                            playerManager.setASMREffectMode(mode)
+                        }) {
+                            VStack(alignment: .leading, spacing: 3) {
+                                HStack {
+                                    Image(systemName: mode.icon)
+                                        .font(.subheadline)
+                                    Text(mode.rawValue)
+                                        .font(.subheadline.bold())
+                                        .lineLimit(1)
+                                    Spacer()
+                                    if playerManager.asmrMode == mode {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.caption)
+                                    }
+                                }
+                                Text(mode.summary)
+                                    .font(.system(size: 10))
+                                    .opacity(0.85)
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, minHeight: 56, maxHeight: 56, alignment: .leading)
+                            .background(
+                                playerManager.asmrMode == mode ?
+                                Color.purple : Color(UIColor.secondarySystemBackground)
+                            )
+                            .foregroundColor(
+                                playerManager.asmrMode == mode ?
+                                .white : .primary
+                            )
+                            .cornerRadius(12)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
                 }
             }
 
