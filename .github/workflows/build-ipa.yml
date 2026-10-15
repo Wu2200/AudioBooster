@@ -38,7 +38,8 @@ jobs:
 
       - name: Generate App Icon
         run: |
-          swift Scripts/generate_icon.swift
+          pip3 install --quiet pillow
+          python3 Scripts/generate_icon.py
           ls -lh AudioBooster/Assets.xcassets/AppIcon.appiconset/
 
       - name: Install XcodeGen
@@ -85,15 +86,20 @@ jobs:
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: AudioBooster v1.0.${{ github.run_number }}
+          tag_name: v1.1.${{ github.run_number }}
+          name: AudioBooster v1.1.${{ github.run_number }}
           body: |
-            ## AudioBooster 自动打包发布 (IPA)
-            - 自动编译构建于 GitHub Actions (Run: #${{ github.run_number }})
-            - 附带全新设计的高清 App 图标与优化播放器架构
-            - 支持突破 iOS 系统音量限制 2x / 3x / 4x (+12dB)
-            - 外部 URL Scheme 跳转即刻秒播，UI 全程丝滑响应
-            - 适配 TrollStore (巨魔)、AltStore、Sideloadly、牛蛙助手自签安装
+            ## AudioBooster v1.1 发布说明
+            - **全新视觉设计**：生成并配置了定制的高清 App 图标与扬声器增益标识
+            - **进度条全面重构**：
+              - 增加了网络音频**预载/已缓冲进度条**（区分当前播放进度与已预载进度）
+              - 支持直接**单击**进度条快速定位跳转，及拖拽滑动调节
+            - **外部唤醒性能优化**：
+              - 优化了通过 URL Scheme (`audioboost://`) 唤醒起播逻辑为**异步后台加载**，界面彻底告别卡死与等待，秒级响应
+            - **界面精简与净化**：
+              - 移除了底部预制音频试听模块
+              - 移除了顶部容易崩坏或抖动的波形动画，换为精致稳定的状态指示器
+              - 移除了音量放大提示横幅，保持界面纯净干练
           files: AudioBooster.ipa
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
