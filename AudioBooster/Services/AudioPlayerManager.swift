@@ -78,6 +78,25 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     @Published var isLooping: Bool = false
+    @Published var isRainEnabled: Bool = false {
+        didSet {
+            if isRainEnabled {
+                do {
+                    try rainAmbience.start()
+                    errorMessage = nil
+                } catch {
+                    errorMessage = "合成雨声启动失败：\(error.localizedDescription)"
+                }
+            } else {
+                rainAmbience.stop()
+            }
+        }
+    }
+    @Published var rainVolume: Float = 0.22 {
+        didSet {
+            rainAmbience.volume = rainVolume
+        }
+    }
     @Published var sleepTimerMinutes: Int = 0
     @Published var sleepTimerRemainingSeconds: Int = 0
 
@@ -88,6 +107,7 @@ final class AudioPlayerManager: ObservableObject {
     // MARK: - 底层流媒体播放引擎 (AVPlayer + CoreAudio Stream Tap 实时拦截)
     var player: AVPlayer?
     private let dspProcessor = StreamDSPProcessor.shared
+    private let rainAmbience = RainAmbiencePlayer()
 
     private var timeObserverToken: Any?
     private var statusObserver: NSKeyValueObservation?
@@ -700,5 +720,74 @@ final class AudioPlayerManager: ObservableObject {
 
         s = s.trimmingCharacters(in: .whitespacesAndNewlines)
         return s.isEmpty ? "网络音频" : s
+    }
+}
+
+private final class RainNoiseState {
+    private var randomState: UInt64 = 0x9E3779B97F4A7C15
+    private var lowPassLeft: Float = 0
+    private var lowPassRight: Float = 0
+    private var midPassLeft: Float = 0
+    private var midPassRight: Float = 0
+
+    func nextSample() -> (Float, Float) {
+        let noiseLeft = nextNoise()
+        let noiseRight = nextNoise()
+        lowPassLeft += 0.008 * (noiseLeft - lowPassLeft)
+        lowPassRight += 0.008 * (noiseRight - lowPassRight)
+        midPassLeft += 0.075 * (noiseLeft - midPassLeft)
+        midPassRight += 0.075 * (noiseRight - midPassRight)
+        let left = (lowPassLeft * 0.45 + (midPassLeft - lowPassLeft) * 0.7 + (noiseLeft - midPassLeft) * 0.2) * 0.22
+        let right = (lowPassRight * 0.45 + (midPassRight - lowPassRight) * 0.7 + (noiseRight - midPassRight) * 0.2) * 0.22
+        return (left, right)
+    }
+
+    private func nextNoise() -> Float {
+        randomState ^= randomState << 13
+        randomState ^= randomState >> 7
+        randomState ^= randomState << 17
+        return Float(randomState & 0x00FF_FFFF) / 8_388_607.5 - 1
+    }
+}
+
+private final class RainAmbiencePlayer {
+    private let engine = AVAudioEngine()
+    var volume: Float = 0.22 {
+        didSet {
+            engine.mainMixerNode.outputVolume = min(0.8, max(0, volume))
+        }
+    }
+
+    init() {
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
+        let state = RainNoiseState()
+        let sourceNode = AVAudioSourceNode(format: format) { _, _, frameCount, audioBufferList in
+            let buffers = UnsafeMutableAudioBufferListPointer(audioBufferList)
+            guard buffers.count >= 2,
+                  let left = buffers[0].mData?.assumingMemoryBound(to: Float.self),
+                  let right = buffers[1].mData?.assumingMemoryBound(to: Float.self) else {
+                return noErr
+            }
+            for frame in 0..<Int(frameCount) {
+                let sample = state.nextSample()
+                left[frame] = sample.0
+                right[frame] = sample.1
+            }
+            return noErr
+        }
+        engine.attach(sourceNode)
+        engine.connect(sourceNode, to: engine.mainMixerNode, format: format)
+        engine.mainMixerNode.outputVolume = volume
+    }
+
+    func start() throws {
+        guard !engine.isRunning else { return }
+        try engine.start()
+    }
+
+    func stop() {
+        if engine.isRunning {
+            engine.stop()
+        }
     }
 }
