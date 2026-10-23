@@ -193,6 +193,7 @@ final class AudioPlayerManager: ObservableObject {
             ]
             let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
             let item = AVPlayerItem(asset: asset)
+            item.preferredForwardBufferDuration = 10
 
             DispatchQueue.main.async {
                 self.setupPlayerWithItem(item, startTime: 0.0, resumePlay: true)
@@ -253,12 +254,17 @@ final class AudioPlayerManager: ObservableObject {
                 guard let self = self else { return }
                 switch observedPlayer.timeControlStatus {
                 case .playing:
-                    guard self.pendingPlaybackTarget == nil,
-                          observedPlayer.currentItem?.isPlaybackBufferEmpty == false else {
-                        observedPlayer.pause()
+                    guard observedPlayer.currentItem?.isPlaybackBufferEmpty == false else {
                         self.isPlaying = false
                         self.isBuffering = true
                         return
+                    }
+                    if self.pendingPlaybackTarget != nil {
+                        let actualTime = observedPlayer.currentTime().seconds
+                        if actualTime.isFinite {
+                            self.currentTime = actualTime
+                        }
+                        self.pendingPlaybackTarget = nil
                     }
                     self.isPlaying = true
                     self.isBuffering = false
@@ -284,7 +290,6 @@ final class AudioPlayerManager: ObservableObject {
             DispatchQueue.main.async {
                 guard let self = self, self.player?.currentItem === observedItem else { return }
                 self.bufferedTime = buffered
-                self.resumePendingPlaybackIfReady(for: observedItem)
             }
         }
 
@@ -294,8 +299,6 @@ final class AudioPlayerManager: ObservableObject {
                 if observedItem.isPlaybackBufferEmpty {
                     self.isPlaying = false
                     self.isBuffering = true
-                } else {
-                    self.resumePendingPlaybackIfReady(for: observedItem)
                 }
             }
         }
@@ -428,6 +431,7 @@ final class AudioPlayerManager: ObservableObject {
         let shouldResume = resumePlayback ?? (isPlaying || p.rate != 0 || p.timeControlStatus == .waitingToPlayAtSpecifiedRate)
         let generation = seekGeneration + 1
         seekGeneration = generation
+        item.cancelPendingSeeks()
         pendingPlaybackTarget = shouldResume ? target : nil
         p.pause()
         isPlaying = false
@@ -448,7 +452,7 @@ final class AudioPlayerManager: ObservableObject {
                     if shouldResume {
                         self.pendingPlaybackTarget = target
                         self.isBuffering = true
-                        self.resumePendingPlaybackIfReady(for: item)
+                        p.play()
                     } else {
                         self.pendingPlaybackTarget = nil
                     }
@@ -474,17 +478,7 @@ final class AudioPlayerManager: ObservableObject {
             }
             return
         }
-        resumePendingPlaybackIfReady(for: item)
-    }
-
-    private func resumePendingPlaybackIfReady(for item: AVPlayerItem) {
-        guard let target = pendingPlaybackTarget,
-              let p = player,
-              p.currentItem === item,
-              item.status == .readyToPlay,
-              isTimeBuffered(target, in: item) else { return }
-        pendingPlaybackTarget = nil
-        isBuffering = false
+        isBuffering = true
         p.play()
     }
 
