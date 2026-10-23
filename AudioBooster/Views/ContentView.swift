@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var inputURL: String = ""
     @State private var recentAudios: [AudioItem] = []
     @State private var showSchemeHelper: Bool = false
+    @State private var showPlaybackDiagnostics: Bool = false
 
     var body: some View {
         NavigationView {
@@ -46,6 +47,39 @@ struct ContentView: View {
 
                     // 播放控制器 (深灰对比预载条 + 平滑防跳闪单击/滑动)
                     PlayerControlView(playerManager: playerManager)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Label("播放诊断", systemImage: "waveform.path.ecg")
+                                .font(.headline)
+                            Spacer()
+                            Button {
+                                UIPasteboard.general.string = playerManager.diagnosticReport
+                            } label: {
+                                Label("复制报告", systemImage: "doc.on.doc")
+                                    .font(.caption)
+                            }
+                            .disabled(playerManager.diagnosticReport.isEmpty)
+                        }
+
+                        Text("复现起播或拖动进度条卡缓冲后，复制报告。报告仅记录音源域名，不包含链接路径和参数。")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        DisclosureGroup("查看诊断日志", isExpanded: $showPlaybackDiagnostics) {
+                            ScrollView {
+                                Text(playerManager.diagnosticReport.isEmpty ? "尚无播放诊断记录" : playerManager.diagnosticReport)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(8)
+                            }
+                            .frame(height: 180)
+                        }
+                    }
+                    .padding(16)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(16)
 
                     // 音量突破核心卡片 (1x / 2x / 3x / 4x，自动持久化记忆)
                     VolumeBoostCard(playerManager: playerManager)
