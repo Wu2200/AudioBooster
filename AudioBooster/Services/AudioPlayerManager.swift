@@ -219,7 +219,7 @@ final class AudioPlayerManager: ObservableObject {
 
         if player == nil {
             player = AVPlayer(playerItem: item)
-            player?.automaticallyWaitsToMinimizeStalling = true
+            player?.automaticallyWaitsToMinimizeStalling = false
         } else {
             player?.replaceCurrentItem(with: item)
         }
@@ -236,7 +236,6 @@ final class AudioPlayerManager: ObservableObject {
                     self.isBuffering = false
                     let dur = observedItem.duration.seconds
                     self.duration = (dur.isNaN || dur.isInfinite) ? 0.0 : dur
-                    self.attachAudioTap(to: observedItem)
                     if startTime > 0 {
                         self.seek(to: startTime, resumePlayback: resumePlay)
                     } else if resumePlay {
