@@ -1,18 +1,25 @@
 import SwiftUI
 
-private struct BackgroundColorOption: Identifiable {
+struct SoftColorTheme: Identifiable {
     let id: String
     let title: String
     let color: Color
-}
+    let cardColor: Color
+    let controlColor: Color
+    let accentColor: Color
 
-private let backgroundColorOptions = [
-    BackgroundColorOption(id: "cream", title: "奶油白", color: Color(red: 0.98, green: 0.96, blue: 0.92)),
-    BackgroundColorOption(id: "sage", title: "浅鼠尾草", color: Color(red: 0.92, green: 0.96, blue: 0.92)),
-    BackgroundColorOption(id: "blue", title: "雾霾蓝", color: Color(red: 0.91, green: 0.95, blue: 0.98)),
-    BackgroundColorOption(id: "lavender", title: "淡薰衣草", color: Color(red: 0.95, green: 0.93, blue: 0.98)),
-    BackgroundColorOption(id: "peach", title: "柔和蜜桃", color: Color(red: 0.99, green: 0.93, blue: 0.90))
-]
+    static let options = [
+        SoftColorTheme(id: "cream", title: "奶油白", color: Color(red: 0.98, green: 0.96, blue: 0.92), cardColor: Color(red: 0.995, green: 0.985, blue: 0.965), controlColor: Color(red: 0.965, green: 0.935, blue: 0.885), accentColor: Color(red: 0.48, green: 0.37, blue: 0.24)),
+        SoftColorTheme(id: "sage", title: "浅鼠尾草", color: Color(red: 0.92, green: 0.96, blue: 0.92), cardColor: Color(red: 0.97, green: 0.985, blue: 0.965), controlColor: Color(red: 0.89, green: 0.94, blue: 0.88), accentColor: Color(red: 0.30, green: 0.47, blue: 0.34)),
+        SoftColorTheme(id: "blue", title: "雾霾蓝", color: Color(red: 0.91, green: 0.95, blue: 0.98), cardColor: Color(red: 0.965, green: 0.985, blue: 0.995), controlColor: Color(red: 0.86, green: 0.93, blue: 0.97), accentColor: Color(red: 0.28, green: 0.47, blue: 0.64)),
+        SoftColorTheme(id: "lavender", title: "淡薰衣草", color: Color(red: 0.95, green: 0.93, blue: 0.98), cardColor: Color(red: 0.985, green: 0.975, blue: 0.995), controlColor: Color(red: 0.925, green: 0.89, blue: 0.97), accentColor: Color(red: 0.49, green: 0.38, blue: 0.62)),
+        SoftColorTheme(id: "peach", title: "柔和蜜桃", color: Color(red: 0.99, green: 0.93, blue: 0.90), cardColor: Color(red: 0.997, green: 0.975, blue: 0.965), controlColor: Color(red: 0.98, green: 0.90, blue: 0.85), accentColor: Color(red: 0.68, green: 0.39, blue: 0.29))
+    ]
+
+    static func option(for id: String) -> SoftColorTheme {
+        options.first(where: { $0.id == id }) ?? options[0]
+    }
+}
 
 struct ContentView: View {
     @EnvironmentObject var playerManager: AudioPlayerManager
@@ -22,8 +29,12 @@ struct ContentView: View {
     @State private var recentAudios: [AudioItem] = []
     @State private var showSchemeHelper: Bool = false
 
+    private var selectedTheme: SoftColorTheme {
+        SoftColorTheme.option(for: selectedBackgroundTheme)
+    }
+
     private var appBackgroundColor: Color {
-        backgroundColorOptions.first(where: { $0.id == selectedBackgroundTheme })?.color ?? backgroundColorOptions[0].color
+        selectedTheme.color
     }
 
     var body: some View {
@@ -70,7 +81,7 @@ struct ContentView: View {
 
                         Spacer(minLength: 8)
 
-                        ForEach(backgroundColorOptions) { option in
+                        ForEach(SoftColorTheme.options) { option in
                             Button {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     selectedBackgroundTheme = option.id
@@ -94,7 +105,7 @@ struct ContentView: View {
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .background(selectedTheme.cardColor)
                     .cornerRadius(16)
 
                     // 播放控制器 (深灰对比预载条 + 平滑防跳闪单击/滑动)
@@ -149,13 +160,13 @@ struct ContentView: View {
                                 Spacer()
                             }
                             .padding(.vertical, 12)
-                            .background(Color.blue)
+                            .background(selectedTheme.accentColor)
                             .foregroundColor(.white)
                             .cornerRadius(10)
                         }
                     }
                     .padding(16)
-                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .background(selectedTheme.cardColor)
                     .cornerRadius(16)
 
                     // 外部一键跳转使用指南 (URL Scheme)
@@ -211,7 +222,7 @@ struct ContentView: View {
                         }
                     }
                     .padding(16)
-                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .background(selectedTheme.cardColor)
                     .cornerRadius(16)
                 }
                 .padding()
@@ -228,7 +239,7 @@ struct ContentView: View {
             .font(.system(.caption, design: .monospaced))
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(UIColor.tertiarySystemGroupedBackground))
+            .background(selectedTheme.controlColor)
             .cornerRadius(6)
     }
 
