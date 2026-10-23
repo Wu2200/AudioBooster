@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PlayerControlView: View {
     @ObservedObject var playerManager: AudioPlayerManager
+    @ObservedObject var playbackProgress: PlaybackProgress
     @AppStorage("selectedBackgroundTheme") private var selectedBackgroundTheme = "cream"
     @State private var isDragging: Bool = false
     @State private var dragProgress: Double? = nil
@@ -20,9 +21,9 @@ struct PlayerControlView: View {
                         if let drag = dragProgress {
                             return drag
                         }
-                        return playerManager.currentTime / totalDuration
+                        return playbackProgress.currentTime / totalDuration
                     }()
-                    let bufferProgress = playerManager.bufferedTime / totalDuration
+                    let bufferProgress = playbackProgress.bufferedTime / totalDuration
                     let clampedCurrent = max(0.0, min(currentProgress, 1.0))
                     let clampedBuffer = max(0.0, min(bufferProgress, 1.0))
 
@@ -69,7 +70,7 @@ struct PlayerControlView: View {
 
                 HStack {
                     let totalDuration = max(1.0, playerManager.duration)
-                    let currentShownSeconds = dragProgress.map { $0 * totalDuration } ?? playerManager.currentTime
+                    let currentShownSeconds = dragProgress.map { $0 * totalDuration } ?? playbackProgress.currentTime
                     Text(formatTime(currentShownSeconds))
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundColor(selectedTheme.accentColor)
