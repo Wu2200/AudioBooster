@@ -1,10 +1,15 @@
 import SwiftUI
 
 struct WaveformVisualizerView: View {
+    @AppStorage("selectedBackgroundTheme") private var selectedBackgroundTheme = "cream"
     var isPlaying: Bool
     var boostMultiplier: Float
 
     @State private var phase: CGFloat = 0
+
+    private var selectedTheme: SoftColorTheme {
+        SoftColorTheme.option(for: selectedBackgroundTheme)
+    }
 
     var body: some View {
         HStack(spacing: 4) {
@@ -41,7 +46,7 @@ struct WaveformVisualizerView: View {
         } else if boostMultiplier >= 1.5 {
             return Color.yellow
         } else {
-            return Color.blue
+            return selectedTheme.accentColor
         }
     }
 }
