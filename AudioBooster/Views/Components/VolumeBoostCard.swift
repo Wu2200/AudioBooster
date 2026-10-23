@@ -2,6 +2,11 @@ import SwiftUI
 
 struct VolumeBoostCard: View {
     @ObservedObject var playerManager: AudioPlayerManager
+    @AppStorage("selectedBackgroundTheme") private var selectedBackgroundTheme = "cream"
+
+    private var selectedTheme: SoftColorTheme {
+        SoftColorTheme.option(for: selectedBackgroundTheme)
+    }
 
     let presets: [(label: String, mult: Float, desc: String)] = [
         ("1x 原声", 1.0, "0 dB"),
@@ -47,7 +52,7 @@ struct VolumeBoostCard: View {
                         .padding(.vertical, 10)
                         .background(
                             playerManager.boostMultiplier == preset.mult ?
-                            badgeColor : Color(UIColor.secondarySystemBackground)
+                            selectedTheme.accentColor : selectedTheme.controlColor
                         )
                         .foregroundColor(
                             playerManager.boostMultiplier == preset.mult ?
@@ -72,11 +77,11 @@ struct VolumeBoostCard: View {
                 }
 
                 Slider(value: $playerManager.boostMultiplier, in: 1.0...8.0, step: 0.1)
-                    .accentColor(badgeColor)
+                    .accentColor(selectedTheme.accentColor)
             }
         }
         .padding(16)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(selectedTheme.cardColor)
         .cornerRadius(16)
     }
 
