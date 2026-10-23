@@ -119,7 +119,7 @@ struct ContentView: View {
                     .cornerRadius(16)
 
                     // 播放控制器 (深灰对比预载条 + 平滑防跳闪单击/滑动)
-                    PlayerControlView(playerManager: playerManager)
+                    PlayerControlView(playerManager: playerManager, playbackProgress: playerManager.playbackProgress)
 
                     // 音量突破核心卡片 (1x / 2x / 3x / 4x，自动持久化记忆)
                     VolumeBoostCard(playerManager: playerManager)
