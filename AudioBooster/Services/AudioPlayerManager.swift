@@ -43,7 +43,6 @@ final class AudioPlayerManager: ObservableObject {
     @Published var currentURLString: String = ""
     @Published var isBuffering: Bool = false
     @Published var errorMessage: String? = nil
-    @Published var diagnosticReport: String = ""
 
     @Published var boostMultiplier: Float = 1.0 {
         didSet {
@@ -91,16 +90,6 @@ final class AudioPlayerManager: ObservableObject {
     private var bufferObserver: NSKeyValueObservation?
     private var playbackBufferEmptyObserver: NSKeyValueObservation?
     private var likelyToKeepUpObserver: NSKeyValueObservation?
-    private var accessLogObserver: NSObjectProtocol?
-    private var errorLogObserver: NSObjectProtocol?
-    private var playbackStalledObserver: NSObjectProtocol?
-    private var diagnosticEntries: [String] = []
-    private var diagnosticStartedAt: TimeInterval?
-    private var startupStartedAt: TimeInterval?
-    private var seekStartedAt: TimeInterval?
-    private var lastAccessLogEventCount = 0
-    private var lastErrorLogEventCount = 0
-    private var lastBufferSignature = ""
     private var pendingPlaybackTarget: Double?
     private var playbackIntent = false
     private var seekInProgress = false
@@ -143,7 +132,6 @@ final class AudioPlayerManager: ObservableObject {
 
     deinit {
         removePeriodicTimeObserver()
-        removeDiagnosticObservers()
         NotificationCenter.default.removeObserver(self)
         if let endObs = endObserver {
             NotificationCenter.default.removeObserver(endObs)
@@ -183,8 +171,6 @@ final class AudioPlayerManager: ObservableObject {
             self.currentTime = 0.0
             self.duration = 0.0
             self.bufferedTime = 0.0
-            self.beginDiagnosticSession(for: url)
-
             if let targetMult = targetMultiplier {
                 self.boostMultiplier = targetMult
             }
@@ -211,12 +197,6 @@ final class AudioPlayerManager: ObservableObject {
         playbackIntent = resumePlay
         seekInProgress = false
         playbackBufferEmptyObserver?.invalidate()
-        likelyToKeepUpObserver?.invalidate()
-        removeDiagnosticObservers()
-        lastAccessLogEventCount = 0
-        lastErrorLogEventCount = 0
-        lastBufferSignature = ""
-        recordDiagnostic("播放器项目已创建")
 
         if let endObs = endObserver {
             NotificationCenter.default.removeObserver(endObs)
@@ -241,11 +221,6 @@ final class AudioPlayerManager: ObservableObject {
                     self.isBuffering = false
                     let dur = observedItem.duration.seconds
                     self.duration = (dur.isNaN || dur.isInfinite) ? 0.0 : dur
-                    if let started = self.startupStartedAt {
-                        self.recordDiagnostic(String(format: "资源就绪，起播请求后 %.2f 秒，时长 %.2f 秒", ProcessInfo.processInfo.systemUptime - started, self.duration))
-                    } else {
-                        self.recordDiagnostic(String(format: "资源就绪，时长 %.2f 秒", self.duration))
-                    }
                     if startTime > 0 {
                         self.seek(to: startTime, resumePlayback: resumePlay)
                     } else if resumePlay {
@@ -256,8 +231,6 @@ final class AudioPlayerManager: ObservableObject {
                     self.playbackIntent = false
                     self.isBuffering = false
                     self.isPlaying = false
-                    let failure = observedItem.error as NSError?
-                    self.recordDiagnostic("资源加载失败 domain=\(failure?.domain ?? "unknown") code=\(failure?.code ?? 0)")
                     self.errorMessage = observedItem.error?.localizedDescription ?? "音频资源加载失败"
                 default:
                     break
@@ -271,14 +244,6 @@ final class AudioPlayerManager: ObservableObject {
                 guard let self = self else { return }
                 switch observedPlayer.timeControlStatus {
                 case .playing:
-                    if let started = self.startupStartedAt {
-                        self.recordDiagnostic(String(format: "开始播放，起播耗时 %.2f 秒", ProcessInfo.processInfo.systemUptime - started))
-                        self.startupStartedAt = nil
-                    }
-                    if let started = self.seekStartedAt {
-                        self.recordDiagnostic(String(format: "跳转后恢复播放，耗时 %.2f 秒", ProcessInfo.processInfo.systemUptime - started))
-                        self.seekStartedAt = nil
-                    }
                     let actualTime = observedPlayer.currentTime().seconds
                     if self.pendingPlaybackTarget != nil {
                         if actualTime.isFinite {
@@ -290,16 +255,12 @@ final class AudioPlayerManager: ObservableObject {
                     self.isPlaying = true
                     self.isBuffering = false
                 case .paused:
-                    self.recordDiagnostic("播放器状态=paused 播放意图=\(self.playbackIntent) 跳转中=\(self.seekInProgress)")
                     self.isPlaying = false
                     self.isBuffering = self.playbackIntent
                     if let item = observedPlayer.currentItem {
                         self.resumePlaybackIfPossible(on: observedPlayer, item: item)
                     }
                 case .waitingToPlayAtSpecifiedRate:
-                    let reason = String(describing: observedPlayer.reasonForWaitingToPlay)
-                    let item = observedPlayer.currentItem
-                    self.recordDiagnostic("播放器等待 reason=\(reason) 播放意图=\(self.playbackIntent) bufferEmpty=\(item?.isPlaybackBufferEmpty ?? false) likelyToKeepUp=\(item?.isPlaybackLikelyToKeepUp ?? false) ranges=\(item.map { self.bufferRangesDescription($0) } ?? "未知")")
                     self.isPlaying = false
                     self.isBuffering = self.playbackIntent
                 @unknown default:
@@ -318,13 +279,6 @@ final class AudioPlayerManager: ObservableObject {
             DispatchQueue.main.async {
                 guard let self = self, self.player?.currentItem === observedItem else { return }
                 self.bufferedTime = buffered
-                let signature = self.bufferRangesDescription(observedItem)
-                if signature != self.lastBufferSignature {
-                    self.lastBufferSignature = signature
-                    self.recordDiagnostic("缓冲区变化 ranges=\(signature) likelyToKeepUp=\(observedItem.isPlaybackLikelyToKeepUp) bufferEmpty=\(observedItem.isPlaybackBufferEmpty)")
-                }
-                self.recordAccessLogEntries(from: observedItem)
-                self.recordErrorLogEntries(from: observedItem)
                 if let player = self.player {
                     self.resumePlaybackIfPossible(on: player, item: observedItem)
                 }
@@ -343,42 +297,6 @@ final class AudioPlayerManager: ObservableObject {
                     self.resumePlaybackIfPossible(on: player, item: observedItem)
                 }
             }
-        }
-
-        likelyToKeepUpObserver = item.observe(\.isPlaybackLikelyToKeepUp, options: [.initial, .new]) { [weak self] observedItem, _ in
-            DispatchQueue.main.async {
-                guard let self = self, self.player?.currentItem === observedItem else { return }
-                self.recordDiagnostic("可持续播放=\(observedItem.isPlaybackLikelyToKeepUp) ranges=\(self.bufferRangesDescription(observedItem))")
-            }
-        }
-
-        accessLogObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemNewAccessLogEntry,
-            object: item,
-            queue: .main
-        ) { [weak self, weak item] _ in
-            guard let self = self, let item = item, self.player?.currentItem === item else { return }
-            self.recordAccessLogEntries(from: item)
-        }
-
-        errorLogObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemNewErrorLogEntry,
-            object: item,
-            queue: .main
-        ) { [weak self, weak item] _ in
-            guard let self = self, let item = item, self.player?.currentItem === item else { return }
-            self.recordErrorLogEntries(from: item)
-        }
-
-        playbackStalledObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemPlaybackStalled,
-            object: item,
-            queue: .main
-        ) { [weak self, weak item] _ in
-            guard let self = self, let item = item, self.player?.currentItem === item else { return }
-            self.recordDiagnostic("系统报告播放卡顿 ranges=\(self.bufferRangesDescription(item))")
-            self.recordAccessLogEntries(from: item)
-            self.recordErrorLogEntries(from: item)
         }
 
         endObserver = NotificationCenter.default.addObserver(
@@ -508,8 +426,6 @@ final class AudioPlayerManager: ObservableObject {
         let shouldResume = resumePlayback ?? playbackIntent
         let generation = seekGeneration + 1
         seekGeneration = generation
-        seekStartedAt = ProcessInfo.processInfo.systemUptime
-        recordDiagnostic(String(format: "跳转请求 target=%.2f resume=%@ ranges=%@", target, String(shouldResume), bufferRangesDescription(item)))
         item.cancelPendingSeeks()
         playbackIntent = shouldResume
         seekInProgress = true
@@ -531,7 +447,6 @@ final class AudioPlayerManager: ObservableObject {
 
                 self.seekInProgress = false
                 if finished {
-                    self.recordDiagnostic(String(format: "跳转定位完成 target=%.2f，播放器时间=%.2f", target, p.currentTime().seconds))
                     self.currentTime = target
                     if shouldResume {
                         self.pendingPlaybackTarget = target
@@ -542,8 +457,6 @@ final class AudioPlayerManager: ObservableObject {
                     }
                     self.updateNowPlayingInfo()
                 } else {
-                    self.recordDiagnostic(String(format: "跳转失败 target=%.2f", target))
-                    self.seekStartedAt = nil
                     self.pendingPlaybackTarget = nil
                     self.playbackIntent = false
                     self.isBuffering = false
@@ -628,75 +541,6 @@ final class AudioPlayerManager: ObservableObject {
         if let token = timeObserverToken {
             player?.removeTimeObserver(token)
             timeObserverToken = nil
-        }
-    }
-
-    private func beginDiagnosticSession(for url: URL) {
-        diagnosticEntries.removeAll(keepingCapacity: true)
-        diagnosticStartedAt = ProcessInfo.processInfo.systemUptime
-        startupStartedAt = diagnosticStartedAt
-        seekStartedAt = nil
-        diagnosticReport = ""
-        let source = "\(url.scheme ?? "unknown")://\(url.host ?? "unknown")"
-        recordDiagnostic("开始加载音源 \(source)")
-    }
-
-    private func recordDiagnostic(_ message: String) {
-        guard Thread.isMainThread else {
-            DispatchQueue.main.async { [weak self] in
-                self?.recordDiagnostic(message)
-            }
-            return
-        }
-        let elapsed = diagnosticStartedAt.map { ProcessInfo.processInfo.systemUptime - $0 } ?? 0
-        diagnosticEntries.append(String(format: "[%6.1f 秒] %@", elapsed, message))
-        if diagnosticEntries.count > 160 {
-            diagnosticEntries.removeFirst(diagnosticEntries.count - 160)
-        }
-        diagnosticReport = diagnosticEntries.joined(separator: "\n")
-    }
-
-    private func bufferRangesDescription(_ item: AVPlayerItem) -> String {
-        let ranges = item.loadedTimeRanges.compactMap { value -> String? in
-            let range = value.timeRangeValue
-            let start = range.start.seconds
-            let end = start + range.duration.seconds
-            guard start.isFinite, end.isFinite else { return nil }
-            return String(format: "%.1f-%.1f", start, end)
-        }
-        return ranges.isEmpty ? "无" : ranges.joined(separator: ",")
-    }
-
-    private func recordAccessLogEntries(from item: AVPlayerItem) {
-        let events = item.accessLog()?.events ?? []
-        guard events.count > lastAccessLogEventCount else { return }
-        for event in events.dropFirst(lastAccessLogEventCount) {
-            recordDiagnostic(String(format: "网络访问 bytes=%lld requests=%ld stalls=%ld transfer=%.2fs observed=%.0f indicated=%.0f", event.numberOfBytesTransferred, event.numberOfMediaRequests, event.numberOfStalls, event.transferDuration, event.observedBitrate, event.indicatedBitrate))
-        }
-        lastAccessLogEventCount = events.count
-    }
-
-    private func recordErrorLogEntries(from item: AVPlayerItem) {
-        let events = item.errorLog()?.events ?? []
-        guard events.count > lastErrorLogEventCount else { return }
-        for event in events.dropFirst(lastErrorLogEventCount) {
-            recordDiagnostic("网络错误 domain=\(event.errorDomain) status=\(event.errorStatusCode)")
-        }
-        lastErrorLogEventCount = events.count
-    }
-
-    private func removeDiagnosticObservers() {
-        if let observer = accessLogObserver {
-            NotificationCenter.default.removeObserver(observer)
-            accessLogObserver = nil
-        }
-        if let observer = errorLogObserver {
-            NotificationCenter.default.removeObserver(observer)
-            errorLogObserver = nil
-        }
-        if let observer = playbackStalledObserver {
-            NotificationCenter.default.removeObserver(observer)
-            playbackStalledObserver = nil
         }
     }
 
