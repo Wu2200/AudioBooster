@@ -21,9 +21,7 @@ struct VolumeBoostCard: View {
                 Label("音量突破放大", systemImage: "speaker.wave.3.fill")
                     .font(.headline)
                     .foregroundColor(.primary)
-
                 Spacer()
-
                 Text(gainBadgeText)
                     .font(.caption)
                     .fontWeight(.bold)
@@ -34,7 +32,6 @@ struct VolumeBoostCard: View {
                     .clipShape(Capsule())
             }
 
-            // 快捷档位切换按钮
             HStack(spacing: 8) {
                 ForEach(presets, id: \.mult) { preset in
                     Button(action: {
@@ -50,32 +47,24 @@ struct VolumeBoostCard: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
-                        .background(
-                            playerManager.boostMultiplier == preset.mult ?
-                            selectedTheme.accentColor : selectedTheme.controlColor
-                        )
-                        .foregroundColor(
-                            playerManager.boostMultiplier == preset.mult ?
-                            .white : .primary
-                        )
+                        .background(playerManager.boostMultiplier == preset.mult ? selectedTheme.accentColor : selectedTheme.controlColor)
+                        .foregroundColor(playerManager.boostMultiplier == preset.mult ? .white : selectedTheme.accentColor)
                         .cornerRadius(10)
                     }
                 }
             }
 
-            // 细粒度连续调节滑块
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text("无级微调: \(String(format: "%.2f", playerManager.boostMultiplier))x")
                         .font(.footnote)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(selectedTheme.accentColor.opacity(0.8))
                     Spacer()
                     Text("当前增益: \(currentDbString)")
                         .font(.footnote)
                         .fontWeight(.semibold)
                         .foregroundColor(badgeColor)
                 }
-
                 Slider(value: $playerManager.boostMultiplier, in: 1.0...8.0, step: 0.1)
                     .accentColor(selectedTheme.accentColor)
             }
