@@ -52,12 +52,6 @@ final class StreamDSPProcessor {
     // MARK: - 1. 呼吸贴耳与综合滤波状态 (IIR 一阶分频与微动态)
     private var breathFilterL: Float = 0.0
     private var breathFilterR: Float = 0.0
-    private var warmCoreL: Float = 0.0
-    private var warmCoreR: Float = 0.0
-
-    // 软噪声门平滑包络 (底噪软净化)
-    private var noiseEnvelope: Float = 0.0
-
     // MARK: - 2. 经典 3D 空间环绕声学混响矩阵 (Schroeder 声学梳状与全通网络)
     // 梳状滤波器缓冲区 (4路不同质数延迟，消除驻波与金属染色)
     private let comb1Cap = 1116 // ~25.3ms
@@ -93,10 +87,6 @@ final class StreamDSPProcessor {
     func resetStates() {
         breathFilterL = 0.0
         breathFilterR = 0.0
-        warmCoreL = 0.0
-        warmCoreR = 0.0
-        noiseEnvelope = 0.0
-
         comb1Buf.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0.0) }
         comb2Buf.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0.0) }
         comb3Buf.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0.0) }
@@ -179,34 +169,12 @@ final class StreamDSPProcessor {
             return (sL, sR)
 
         case .allInOne:
-            // MARK: - 【综合全感】(呼吸贴耳 + 人声饱满 + 底噪软净化 + 临场微环绕)
-            // 1. 底噪软净化 (Soft Noise Expander Gate): 压制无声呼吸间歇的机器沙沙底噪
-            let energy = abs(sL) + abs(sR)
-            noiseEnvelope += 0.05 * (energy - noiseEnvelope)
-            let gateGain: Float = (noiseEnvelope < 0.006) ? 0.82 : 1.0
-
-            let gatedL = sL * gateGain
-            let gatedR = sR * gateGain
-
-            // 2. 呼吸与气流细节提亮 (Air EQ): 提取 3.5kHz~8kHz 细腻气流喘息
             let alpha: Float = 0.32
-            breathFilterL += alpha * (gatedL - breathFilterL)
-            breathFilterR += alpha * (gatedR - breathFilterR)
-            let airL = gatedL - breathFilterL
-            let airR = gatedR - breathFilterR
-
-            // 3. 人声核心温暖感 (Warm Core): 微量偶次谐波防止人声变单薄
-            let warmL = breathFilterL + 0.05 * (breathFilterL * breathFilterL) * (breathFilterL >= 0 ? 1.0 : -1.0)
-            let warmR = breathFilterR + 0.05 * (breathFilterR * breathFilterR) * (breathFilterR >= 0 ? 1.0 : -1.0)
-
-            // 4. 临场轻空间包裹 (Subtle Ambient Wrap): 提取侧边泛音做极微量空间润色
-            let mid = (warmL + warmR) * 0.5
-            let side = (warmL - warmR) * 0.5
-            let revSide = computeCombReverb(input: side) * 0.18
-
-            let finalL = (mid + warmL * 0.5) + (side * 1.15 + revSide) + 1.45 * airL
-            let finalR = (mid + warmR * 0.5) - (side * 1.15 - revSide) + 1.45 * airR
-            return (finalL, finalR)
+            breathFilterL += alpha * (sL - breathFilterL)
+            breathFilterR += alpha * (sR - breathFilterR)
+            let airL = sL - breathFilterL
+            let airR = sR - breathFilterR
+            return (breathFilterL + 1.12 * airL, breathFilterR + 1.12 * airR)
 
         case .whisperBreath:
             // MARK: - 【呼吸贴耳】(强力凸显耳语、喘息起伏与近距唇齿微动态)
@@ -269,14 +237,6 @@ final class StreamDSPProcessor {
         let revL = ap2Out + (c1Out - c2Out) * 0.22
         let revR = ap2Out + (c3Out - c4Out) * 0.22
         return (revL, revR)
-    }
-
-    @inline(__always)
-    private func computeCombReverb(input: Float) -> Float {
-        let c1Out = comb1Buf[comb1Idx]
-        comb1Buf[comb1Idx] = input + c1Out * 0.65
-        comb1Idx = (comb1Idx + 1) % comb1Cap
-        return c1Out
     }
 
     // MARK: - 8.0x 极限大音量双曲正切软压限保护
