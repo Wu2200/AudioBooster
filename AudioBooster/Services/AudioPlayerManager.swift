@@ -213,7 +213,6 @@ final class AudioPlayerManager: ObservableObject {
             ]
             let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
             let item = AVPlayerItem(asset: asset)
-            item.preferredForwardBufferDuration = 10
 
             DispatchQueue.main.async {
                 self.setupPlayerWithItem(item, startTime: 0.0, resumePlay: true)
