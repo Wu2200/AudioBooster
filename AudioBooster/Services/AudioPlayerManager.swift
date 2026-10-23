@@ -95,6 +95,7 @@ final class AudioPlayerManager: ObservableObject {
     private var bufferObserver: NSKeyValueObservation?
     private var pendingPlaybackTarget: Double?
     private var seekGeneration = 0
+    private var playbackIntent = false
     private var endObserver: NSObjectProtocol?
 
     private var sleepTimerCancellable: AnyCancellable?
@@ -208,6 +209,7 @@ final class AudioPlayerManager: ObservableObject {
         removePeriodicTimeObserver()
         seekGeneration += 1
         pendingPlaybackTarget = nil
+        playbackIntent = resumePlay
 
         if let endObs = endObserver {
             NotificationCenter.default.removeObserver(endObs)
@@ -234,12 +236,13 @@ final class AudioPlayerManager: ObservableObject {
                     let dur = observedItem.duration.seconds
                     self.duration = (dur.isNaN || dur.isInfinite) ? 0.0 : dur
                     if startTime > 0 {
-                        self.seek(to: startTime, resumePlayback: resumePlay)
-                    } else if resumePlay {
+                        self.seek(to: startTime, resumePlayback: self.playbackIntent)
+                    } else if self.playbackIntent {
                         self.play()
                     }
                     self.updateNowPlayingInfo()
                 case .failed:
+                    self.playbackIntent = false
                     self.isBuffering = false
                     self.isPlaying = false
                     self.errorMessage = observedItem.error?.localizedDescription ?? "音频资源加载失败"
@@ -255,6 +258,12 @@ final class AudioPlayerManager: ObservableObject {
                 guard let self = self else { return }
                 switch observedPlayer.timeControlStatus {
                 case .playing:
+                    guard self.playbackIntent else {
+                        observedPlayer.pause()
+                        self.isPlaying = false
+                        self.isBuffering = false
+                        return
+                    }
                     if self.pendingPlaybackTarget != nil {
                         let actualTime = observedPlayer.currentTime().seconds
                         if actualTime.isFinite {
@@ -266,10 +275,10 @@ final class AudioPlayerManager: ObservableObject {
                     self.isBuffering = false
                 case .paused:
                     self.isPlaying = false
-                    self.isBuffering = self.pendingPlaybackTarget != nil
+                    self.isBuffering = self.playbackIntent && self.pendingPlaybackTarget != nil
                 case .waitingToPlayAtSpecifiedRate:
                     self.isPlaying = false
-                    self.isBuffering = true
+                    self.isBuffering = self.playbackIntent
                 @unknown default:
                     break
                 }
@@ -298,6 +307,7 @@ final class AudioPlayerManager: ObservableObject {
             if self.isLooping {
                 self.seek(to: 0.0, resumePlayback: true)
             } else {
+                self.playbackIntent = false
                 self.isPlaying = false
                 self.currentTime = 0.0
                 self.player?.seek(to: .zero)
@@ -379,7 +389,7 @@ final class AudioPlayerManager: ObservableObject {
     // MARK: - 播放与进度控制
     func togglePlayPause() {
         guard let p = player else { return }
-        if isPlaying || pendingPlaybackTarget != nil || p.rate != 0 || p.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+        if playbackIntent || isPlaying || pendingPlaybackTarget != nil || p.rate != 0 || p.timeControlStatus == .waitingToPlayAtSpecifiedRate {
             pause()
         } else if duration > 0 && abs(currentTime - duration) < 0.5 {
             seek(to: 0.0, resumePlayback: true)
@@ -389,6 +399,7 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     func pause() {
+        playbackIntent = false
         seekGeneration += 1
         pendingPlaybackTarget = nil
         player?.pause()
@@ -398,6 +409,7 @@ final class AudioPlayerManager: ObservableObject {
 
     func play() {
         guard let p = player else { return }
+        playbackIntent = true
         let seconds = p.currentTime().seconds
         let target = seconds.isFinite ? max(0.0, seconds) : max(0.0, currentTime)
         startPlaybackWhenBuffered(at: target)
@@ -414,7 +426,8 @@ final class AudioPlayerManager: ObservableObject {
         }
 
         let target = max(0.0, duration > 0 ? min(seconds, duration) : seconds)
-        let shouldResume = resumePlayback ?? (isPlaying || p.rate != 0 || p.timeControlStatus == .waitingToPlayAtSpecifiedRate)
+        let shouldResume = resumePlayback ?? playbackIntent
+        playbackIntent = shouldResume
         let generation = seekGeneration + 1
         seekGeneration = generation
         item.cancelPendingSeeks()
@@ -545,6 +558,8 @@ final class AudioPlayerManager: ObservableObject {
                     let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
                     if options.contains(.shouldResume) {
                         self.play()
+                    } else {
+                        self.playbackIntent = false
                     }
                 }
             @unknown default:
@@ -560,6 +575,7 @@ final class AudioPlayerManager: ObservableObject {
 
         if reason == .oldDeviceUnavailable {
             DispatchQueue.main.async {
+                self.playbackIntent = false
                 self.isPlaying = false
                 self.updateNowPlayingInfo()
             }
