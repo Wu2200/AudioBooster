@@ -9,11 +9,11 @@ struct SoftColorTheme: Identifiable {
     let accentColor: Color
 
     static let options = [
-        SoftColorTheme(id: "cream", title: "奶油白", color: Color(red: 0.98, green: 0.96, blue: 0.92), cardColor: Color(red: 0.995, green: 0.985, blue: 0.965), controlColor: Color(red: 0.965, green: 0.935, blue: 0.885), accentColor: Color(red: 0.48, green: 0.37, blue: 0.24)),
-        SoftColorTheme(id: "sage", title: "浅鼠尾草", color: Color(red: 0.92, green: 0.96, blue: 0.92), cardColor: Color(red: 0.97, green: 0.985, blue: 0.965), controlColor: Color(red: 0.89, green: 0.94, blue: 0.88), accentColor: Color(red: 0.30, green: 0.47, blue: 0.34)),
-        SoftColorTheme(id: "blue", title: "雾霾蓝", color: Color(red: 0.91, green: 0.95, blue: 0.98), cardColor: Color(red: 0.965, green: 0.985, blue: 0.995), controlColor: Color(red: 0.86, green: 0.93, blue: 0.97), accentColor: Color(red: 0.28, green: 0.47, blue: 0.64)),
-        SoftColorTheme(id: "lavender", title: "淡薰衣草", color: Color(red: 0.95, green: 0.93, blue: 0.98), cardColor: Color(red: 0.985, green: 0.975, blue: 0.995), controlColor: Color(red: 0.925, green: 0.89, blue: 0.97), accentColor: Color(red: 0.49, green: 0.38, blue: 0.62)),
-        SoftColorTheme(id: "peach", title: "柔和蜜桃", color: Color(red: 0.99, green: 0.93, blue: 0.90), cardColor: Color(red: 0.997, green: 0.975, blue: 0.965), controlColor: Color(red: 0.98, green: 0.90, blue: 0.85), accentColor: Color(red: 0.68, green: 0.39, blue: 0.29))
+        SoftColorTheme(id: "cream", title: "奶油白", color: Color(red: 0.91, green: 0.87, blue: 0.80), cardColor: Color(red: 0.95, green: 0.92, blue: 0.86), controlColor: Color(red: 0.86, green: 0.81, blue: 0.72), accentColor: Color(red: 0.43, green: 0.31, blue: 0.19)),
+        SoftColorTheme(id: "sage", title: "浅鼠尾草", color: Color(red: 0.82, green: 0.87, blue: 0.80), cardColor: Color(red: 0.89, green: 0.92, blue: 0.86), controlColor: Color(red: 0.75, green: 0.82, blue: 0.73), accentColor: Color(red: 0.26, green: 0.40, blue: 0.29)),
+        SoftColorTheme(id: "blue", title: "雾霾蓝", color: Color(red: 0.80, green: 0.85, blue: 0.90), cardColor: Color(red: 0.88, green: 0.91, blue: 0.94), controlColor: Color(red: 0.72, green: 0.81, blue: 0.87), accentColor: Color(red: 0.24, green: 0.41, blue: 0.57)),
+        SoftColorTheme(id: "lavender", title: "淡薰衣草", color: Color(red: 0.85, green: 0.81, blue: 0.90), cardColor: Color(red: 0.92, green: 0.89, blue: 0.95), controlColor: Color(red: 0.78, green: 0.73, blue: 0.86), accentColor: Color(red: 0.43, green: 0.32, blue: 0.57)),
+        SoftColorTheme(id: "peach", title: "柔和蜜桃", color: Color(red: 0.92, green: 0.82, blue: 0.77), cardColor: Color(red: 0.96, green: 0.89, blue: 0.85), controlColor: Color(red: 0.86, green: 0.75, blue: 0.69), accentColor: Color(red: 0.60, green: 0.33, blue: 0.24))
     ]
 
     static func option(for id: String) -> SoftColorTheme {
