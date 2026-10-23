@@ -96,6 +96,9 @@ final class AudioPlayerManager: ObservableObject {
     private var playbackBufferEmptyObserver: NSKeyValueObservation?
     private var pendingPlaybackTarget: Double?
     private var seekGeneration = 0
+    private var downloadTask: URLSessionDownloadTask?
+    private var downloadGeneration = 0
+    private var downloadedAudioURL: URL?
     private var endObserver: NSObjectProtocol?
 
     private var sleepTimerCancellable: AnyCancellable?
@@ -148,7 +151,6 @@ final class AudioPlayerManager: ObservableObject {
         dspProcessor.asmrMode = self.asmrMode
     }
 
-    // MARK: - 加载并秒开播放 (全异步网络流媒体架构，边下边播)
     func loadAndPlay(urlString: String, multiplier: Float? = nil, title: String? = nil, initialBoost: Float? = nil) {
         let cleaned = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: cleaned) else {
@@ -168,8 +170,30 @@ final class AudioPlayerManager: ObservableObject {
 
         let targetMultiplier = multiplier ?? initialBoost
 
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.downloadGeneration += 1
+            let generation = self.downloadGeneration
+            self.downloadTask?.cancel()
+            self.downloadTask = nil
+            self.removePeriodicTimeObserver()
+            self.statusObserver?.invalidate()
+            self.timeControlObserver?.invalidate()
+            self.bufferObserver?.invalidate()
+            self.playbackBufferEmptyObserver?.invalidate()
+            if let endObserver = self.endObserver {
+                NotificationCenter.default.removeObserver(endObserver)
+                self.endObserver = nil
+            }
+            self.player?.pause()
+            self.player?.replaceCurrentItem(with: nil)
+            if let oldURL = self.downloadedAudioURL {
+                try? FileManager.default.removeItem(at: oldURL)
+                self.downloadedAudioURL = nil
+            }
+
             self.errorMessage = nil
+            self.isPlaying = false
             self.isBuffering = true
             self.currentURLString = cleaned
             self.currentTitle = resolvedTitle
@@ -180,24 +204,63 @@ final class AudioPlayerManager: ObservableObject {
             if let targetMult = targetMultiplier {
                 self.boostMultiplier = targetMult
             }
+
+            var request = URLRequest(url: url)
+            request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+            request.setValue("\(url.scheme ?? "http")://\(url.host ?? "")/", forHTTPHeaderField: "Referer")
+
+            let task = URLSession.shared.downloadTask(with: request) { [weak self] location, response, error in
+                DispatchQueue.main.async {
+                    guard let self = self, self.downloadGeneration == generation else { return }
+                    self.downloadTask = nil
+
+                    if let error = error {
+                        self.isBuffering = false
+                        self.errorMessage = error.localizedDescription
+                        return
+                    }
+
+                    guard let response = response as? HTTPURLResponse,
+                          (200..<300).contains(response.statusCode),
+                          let location = location else {
+                        let statusCode = (response as? HTTPURLResponse)?.statusCode
+                        self.isBuffering = false
+                        self.errorMessage = statusCode.map { "音频下载失败，HTTP \($0)" } ?? "服务器未返回有效音频文件"
+                        return
+                    }
+
+                    let suggestedExtension = response.suggestedFilename.map { URL(fileURLWithPath: $0).pathExtension } ?? ""
+                    let fileExtension = suggestedExtension.isEmpty ? (url.pathExtension.isEmpty ? "audio" : url.pathExtension) : suggestedExtension
+                    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("AudioBoosterAudio", isDirectory: true)
+
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        do {
+                            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                            let destination = directory.appendingPathComponent(UUID().uuidString).appendingPathExtension(fileExtension)
+                            try FileManager.default.moveItem(at: location, to: destination)
+                            DispatchQueue.main.async {
+                                guard self.downloadGeneration == generation else {
+                                    try? FileManager.default.removeItem(at: destination)
+                                    return
+                                }
+                                self.downloadedAudioURL = destination
+                                self.setupPlayerWithItem(AVPlayerItem(url: destination), startTime: 0.0, resumePlay: true)
+                            }
+                        } catch {
+                            DispatchQueue.main.async {
+                                guard self.downloadGeneration == generation else { return }
+                                self.isBuffering = false
+                                self.errorMessage = error.localizedDescription
+                            }
+                        }
+                    }
+                }
+            }
+            self.downloadTask = task
+            task.resume()
         }
 
         dspProcessor.resetStates()
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self else { return }
-
-            let headers: [String: String] = [
-                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
-                "Referer": "\(url.scheme ?? "http")://\(url.host ?? "")/"
-            ]
-            let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
-            let item = AVPlayerItem(asset: asset)
-
-            DispatchQueue.main.async {
-                self.setupPlayerWithItem(item, startTime: 0.0, resumePlay: true)
-            }
-        }
     }
 
     private func setupPlayerWithItem(_ item: AVPlayerItem, startTime: Double = 0.0, resumePlay: Bool = true) {
@@ -282,10 +345,16 @@ final class AudioPlayerManager: ObservableObject {
 
         bufferObserver?.invalidate()
         bufferObserver = item.observe(\.loadedTimeRanges, options: [.new]) { [weak self] (observedItem, _) in
-            let ranges = observedItem.loadedTimeRanges.map { $0.timeRangeValue }
-            let buffered = ranges.map { $0.start.seconds + $0.duration.seconds }
-                .filter { $0.isFinite }
-                .max() ?? 0.0
+            let buffered: Double
+            if let asset = observedItem.asset as? AVURLAsset, asset.url.isFileURL {
+                let seconds = observedItem.duration.seconds
+                buffered = seconds.isFinite ? seconds : 0.0
+            } else {
+                let ranges = observedItem.loadedTimeRanges.map { $0.timeRangeValue }
+                buffered = ranges.map { $0.start.seconds + $0.duration.seconds }
+                    .filter { $0.isFinite }
+                    .max() ?? 0.0
+            }
             DispatchQueue.main.async {
                 guard let self = self, self.player?.currentItem === observedItem else { return }
                 self.bufferedTime = buffered
@@ -483,6 +552,9 @@ final class AudioPlayerManager: ObservableObject {
 
     private func isTimeBuffered(_ seconds: Double, in item: AVPlayerItem) -> Bool {
         guard seconds.isFinite else { return false }
+        if let asset = item.asset as? AVURLAsset, asset.url.isFileURL {
+            return true
+        }
         return item.loadedTimeRanges.contains { value in
             let range = value.timeRangeValue
             let start = range.start.seconds
