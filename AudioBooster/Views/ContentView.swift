@@ -41,6 +41,16 @@ struct ContentView: View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 18) {
+                    HStack {
+                        Text("AudioBooster")
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                            .foregroundColor(selectedTheme.accentColor)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+
                     // 错误提示
                     if let err = playerManager.errorMessage {
                         HStack {
@@ -129,12 +139,15 @@ struct ContentView: View {
                                 }
                             }
                             .font(.caption)
-                            .foregroundColor(.blue)
+                            .foregroundColor(selectedTheme.accentColor)
                         }
 
                         HStack {
                             TextField("https://example.com/audio.mp3", text: $inputURL)
-                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .textFieldStyle(PlainTextFieldStyle())
+                                .padding(10)
+                                .background(selectedTheme.controlColor)
+                                .cornerRadius(9)
                                 .keyboardType(.URL)
                                 .autocapitalization(.none)
                                 .disableAutocorrection(true)
@@ -181,7 +194,7 @@ struct ContentView: View {
                                 }
                             }
                             .font(.caption)
-                            .foregroundColor(.blue)
+                            .foregroundColor(selectedTheme.accentColor)
                         }
 
                         if showSchemeHelper {
@@ -214,8 +227,8 @@ struct ContentView: View {
                                     .font(.caption)
                                     .padding(.vertical, 6)
                                     .padding(.horizontal, 12)
-                                    .background(Color.blue.opacity(0.12))
-                                    .foregroundColor(.blue)
+                                    .background(selectedTheme.accentColor.opacity(0.12))
+                                    .foregroundColor(selectedTheme.accentColor)
                                     .cornerRadius(8)
                                 }
                             }
@@ -229,7 +242,7 @@ struct ContentView: View {
             }
             .background(appBackgroundColor.ignoresSafeArea())
             .animation(.easeInOut(duration: 0.2), value: selectedBackgroundTheme)
-            .navigationTitle("AudioBooster")
+            .navigationBarHidden(true)
         }
         .navigationViewStyle(StackNavigationViewStyle())
     }
