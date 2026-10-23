@@ -35,7 +35,6 @@ enum ASMREffectMode: String, CaseIterable, Identifiable {
 final class AudioPlayerManager: ObservableObject {
     static let shared = AudioPlayerManager()
 
-    // MARK: - 基础播放状态 (边下边播 · 秒开起播)
     @Published var isPlaying: Bool = false
     @Published var currentTime: Double = 0.0
     @Published var duration: Double = 0.0
@@ -45,7 +44,6 @@ final class AudioPlayerManager: ObservableObject {
     @Published var isBuffering: Bool = false
     @Published var errorMessage: String? = nil
 
-    // MARK: - 音量突破倍数 (最高支持 8.0x，实时 32位浮点动态压限)
     @Published var boostMultiplier: Float = 1.0 {
         didSet {
             UserDefaults.standard.set(boostMultiplier, forKey: volumeStorageKey)
@@ -63,7 +61,6 @@ final class AudioPlayerManager: ObservableObject {
         self.boostMultiplier = mult
     }
 
-    // MARK: - ASMR 特效与助眠系统
     @Published var asmrMode: ASMREffectMode = .allInOne {
         didSet {
             UserDefaults.standard.set(asmrMode.rawValue, forKey: asmrModeStorageKey)
@@ -81,11 +78,9 @@ final class AudioPlayerManager: ObservableObject {
     @Published var sleepTimerMinutes: Int = 0
     @Published var sleepTimerRemainingSeconds: Int = 0
 
-    // MARK: - 提示状态
     @Published var showNotificationBanner: Bool = false
     @Published var notificationText: String = ""
 
-    // MARK: - 底层流媒体播放引擎 (AVPlayer + CoreAudio Stream Tap 实时拦截)
     var player: AVPlayer?
     private let dspProcessor = StreamDSPProcessor.shared
 
@@ -93,10 +88,9 @@ final class AudioPlayerManager: ObservableObject {
     private var statusObserver: NSKeyValueObservation?
     private var timeControlObserver: NSKeyValueObservation?
     private var bufferObserver: NSKeyValueObservation?
+    private var playbackBufferEmptyObserver: NSKeyValueObservation?
     private var pendingPlaybackTarget: Double?
     private var seekGeneration = 0
-    private var playbackIntent = false
-    private var audioInterruptionActive = false
     private var endObserver: NSObjectProtocol?
 
     private var sleepTimerCancellable: AnyCancellable?
@@ -104,7 +98,6 @@ final class AudioPlayerManager: ObservableObject {
     private let asmrModeStorageKey = "AudioBooster_SavedASMRMode_v1"
 
     private init() {
-        // 启动时自动彻底清理全部历史残留缓存，保证 0 MB 冗余占用
         clearAllOldDiskCaches()
 
         if let savedMultiplier = UserDefaults.standard.object(forKey: volumeStorageKey) as? Float, savedMultiplier >= 1.0 {
@@ -142,7 +135,6 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
-    // MARK: - 同步 DSP 参数到实时音频流处理器 (零延迟无锁流转)
     private func syncDSPParameters() {
         dspProcessor.boostMultiplier = self.boostMultiplier
         dspProcessor.isLimiterEnabled = self.isLimiterEnabled
@@ -168,21 +160,8 @@ final class AudioPlayerManager: ObservableObject {
 
         let targetMultiplier = multiplier ?? initialBoost
 
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            self.removePeriodicTimeObserver()
-            self.statusObserver?.invalidate()
-            self.timeControlObserver?.invalidate()
-            self.bufferObserver?.invalidate()
-            if let endObserver = self.endObserver {
-                NotificationCenter.default.removeObserver(endObserver)
-                self.endObserver = nil
-            }
-            self.player?.pause()
-            self.player?.replaceCurrentItem(with: nil)
-
+        DispatchQueue.main.async {
             self.errorMessage = nil
-            self.isPlaying = false
             self.isBuffering = true
             self.currentURLString = cleaned
             self.currentTitle = resolvedTitle
@@ -193,6 +172,12 @@ final class AudioPlayerManager: ObservableObject {
             if let targetMult = targetMultiplier {
                 self.boostMultiplier = targetMult
             }
+        }
+
+        dspProcessor.resetStates()
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
 
             let headers: [String: String] = [
                 "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Mobile/15E148 Safari/604.1",
@@ -200,17 +185,19 @@ final class AudioPlayerManager: ObservableObject {
             ]
             let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
             let item = AVPlayerItem(asset: asset)
-            self.setupPlayerWithItem(item, startTime: 0.0, resumePlay: true)
-        }
+            item.preferredForwardBufferDuration = 10
 
-        dspProcessor.resetStates()
+            DispatchQueue.main.async {
+                self.setupPlayerWithItem(item, startTime: 0.0, resumePlay: true)
+            }
+        }
     }
 
     private func setupPlayerWithItem(_ item: AVPlayerItem, startTime: Double = 0.0, resumePlay: Bool = true) {
         removePeriodicTimeObserver()
         seekGeneration += 1
         pendingPlaybackTarget = nil
-        playbackIntent = resumePlay
+        playbackBufferEmptyObserver?.invalidate()
 
         if let endObs = endObserver {
             NotificationCenter.default.removeObserver(endObs)
@@ -224,7 +211,6 @@ final class AudioPlayerManager: ObservableObject {
             player?.replaceCurrentItem(with: item)
         }
 
-        // 挂载实时 CoreAudio MTAudioProcessingTap 抽头
         attachAudioTap(to: item)
 
         statusObserver?.invalidate()
@@ -236,14 +222,14 @@ final class AudioPlayerManager: ObservableObject {
                     self.isBuffering = false
                     let dur = observedItem.duration.seconds
                     self.duration = (dur.isNaN || dur.isInfinite) ? 0.0 : dur
+                    self.attachAudioTap(to: observedItem)
                     if startTime > 0 {
-                        self.seek(to: startTime, resumePlayback: self.playbackIntent)
-                    } else if self.playbackIntent {
+                        self.seek(to: startTime, resumePlayback: resumePlay)
+                    } else if resumePlay {
                         self.play()
                     }
                     self.updateNowPlayingInfo()
                 case .failed:
-                    self.playbackIntent = false
                     self.isBuffering = false
                     self.isPlaying = false
                     self.errorMessage = observedItem.error?.localizedDescription ?? "音频资源加载失败"
@@ -259,10 +245,9 @@ final class AudioPlayerManager: ObservableObject {
                 guard let self = self else { return }
                 switch observedPlayer.timeControlStatus {
                 case .playing:
-                    guard self.playbackIntent else {
-                        observedPlayer.pause()
+                    guard observedPlayer.currentItem?.isPlaybackBufferEmpty == false else {
                         self.isPlaying = false
-                        self.isBuffering = false
+                        self.isBuffering = true
                         return
                     }
                     if self.pendingPlaybackTarget != nil {
@@ -276,10 +261,10 @@ final class AudioPlayerManager: ObservableObject {
                     self.isBuffering = false
                 case .paused:
                     self.isPlaying = false
-                    self.isBuffering = self.playbackIntent && !self.audioInterruptionActive
+                    self.isBuffering = self.pendingPlaybackTarget != nil
                 case .waitingToPlayAtSpecifiedRate:
                     self.isPlaying = false
-                    self.isBuffering = self.playbackIntent
+                    self.isBuffering = true
                 @unknown default:
                     break
                 }
@@ -296,14 +281,15 @@ final class AudioPlayerManager: ObservableObject {
             DispatchQueue.main.async {
                 guard let self = self, self.player?.currentItem === observedItem else { return }
                 self.bufferedTime = buffered
-                guard self.playbackIntent,
-                      !self.audioInterruptionActive,
-                      observedItem.status == .readyToPlay,
-                      let player = self.player,
-                      player.timeControlStatus == .paused else { return }
-                let target = self.pendingPlaybackTarget ?? player.currentTime().seconds
-                if self.isTimeBuffered(target, in: observedItem) {
-                    player.play()
+            }
+        }
+
+        playbackBufferEmptyObserver = item.observe(\.isPlaybackBufferEmpty, options: [.initial, .new]) { [weak self] observedItem, _ in
+            DispatchQueue.main.async {
+                guard let self = self, self.player?.currentItem === observedItem else { return }
+                if observedItem.isPlaybackBufferEmpty {
+                    self.isPlaying = false
+                    self.isBuffering = true
                 }
             }
         }
@@ -317,7 +303,6 @@ final class AudioPlayerManager: ObservableObject {
             if self.isLooping {
                 self.seek(to: 0.0, resumePlayback: true)
             } else {
-                self.playbackIntent = false
                 self.isPlaying = false
                 self.currentTime = 0.0
                 self.player?.seek(to: .zero)
@@ -328,7 +313,6 @@ final class AudioPlayerManager: ObservableObject {
         addPeriodicTimeObserver()
     }
 
-    // MARK: - 注入实时流媒体 DSP 抽头 (边下边播无需本地全量文件)
     private func attachAudioTap(to item: AVPlayerItem) {
         guard let tap = dspProcessor.makeTap() else { return }
 
@@ -343,7 +327,6 @@ final class AudioPlayerManager: ObservableObject {
             for track in audioTracks {
                 let trackParams = AVMutableAudioMixInputParameters(track: track)
                 trackParams.audioTapProcessor = tap
-                // 基础直通音量，所有 8x 突破放大和防爆音软压限全部交由 StreamDSPProcessor 内部处理
                 trackParams.setVolume(1.0, at: .zero)
                 inputParameters.append(trackParams)
             }
@@ -356,12 +339,10 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
-    // MARK: - ASMR 音效模式切换
     func setASMREffectMode(_ mode: ASMREffectMode) {
         self.asmrMode = mode
     }
 
-    // MARK: - 睡眠定时器 (到期前 30 秒平滑淡出)
     func setSleepTimer(minutes: Int) {
         self.sleepTimerMinutes = minutes
         self.sleepTimerRemainingSeconds = minutes * 60
@@ -381,7 +362,6 @@ final class AudioPlayerManager: ObservableObject {
                 if self.sleepTimerRemainingSeconds > 0 {
                     self.sleepTimerRemainingSeconds -= 1
 
-                    // 到期前 30 秒平滑淡出，绝不惊醒用户
                     if self.sleepTimerRemainingSeconds <= 30 && self.sleepTimerRemainingSeconds > 0 {
                         let fadeRatio = Float(self.sleepTimerRemainingSeconds) / 30.0
                         self.player?.volume = max(0.05, fadeRatio)
@@ -396,10 +376,9 @@ final class AudioPlayerManager: ObservableObject {
             }
     }
 
-    // MARK: - 播放与进度控制
     func togglePlayPause() {
         guard let p = player else { return }
-        if playbackIntent || isPlaying || pendingPlaybackTarget != nil || p.rate != 0 || p.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+        if isPlaying || pendingPlaybackTarget != nil || p.rate != 0 || p.timeControlStatus == .waitingToPlayAtSpecifiedRate {
             pause()
         } else if duration > 0 && abs(currentTime - duration) < 0.5 {
             seek(to: 0.0, resumePlayback: true)
@@ -409,7 +388,6 @@ final class AudioPlayerManager: ObservableObject {
     }
 
     func pause() {
-        playbackIntent = false
         seekGeneration += 1
         pendingPlaybackTarget = nil
         player?.pause()
@@ -419,7 +397,6 @@ final class AudioPlayerManager: ObservableObject {
 
     func play() {
         guard let p = player else { return }
-        playbackIntent = true
         let seconds = p.currentTime().seconds
         let target = seconds.isFinite ? max(0.0, seconds) : max(0.0, currentTime)
         startPlaybackWhenBuffered(at: target)
@@ -436,15 +413,12 @@ final class AudioPlayerManager: ObservableObject {
         }
 
         let target = max(0.0, duration > 0 ? min(seconds, duration) : seconds)
-        let shouldResume = resumePlayback ?? playbackIntent
-        playbackIntent = shouldResume
+        let shouldResume = resumePlayback ?? (isPlaying || p.rate != 0 || p.timeControlStatus == .waitingToPlayAtSpecifiedRate)
         let generation = seekGeneration + 1
         seekGeneration = generation
         item.cancelPendingSeeks()
         pendingPlaybackTarget = shouldResume ? target : nil
-        if !shouldResume {
-            p.pause()
-        }
+        p.pause()
         isPlaying = false
         isBuffering = shouldResume
         currentTime = target
@@ -472,9 +446,6 @@ final class AudioPlayerManager: ObservableObject {
                     self.pendingPlaybackTarget = nil
                     self.isBuffering = false
                     self.isPlaying = false
-                    if shouldResume && self.playbackIntent {
-                        p.play()
-                    }
                     self.errorMessage = "无法跳转到所选位置"
                 }
                 completion?()
@@ -515,7 +486,6 @@ final class AudioPlayerManager: ObservableObject {
         skip(seconds: seconds)
     }
 
-    // MARK: - AVPlayer 进度监听
     private func addPeriodicTimeObserver() {
         removePeriodicTimeObserver()
         let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
@@ -541,7 +511,6 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
-    // MARK: - 中断监听与线路保护
     private func setupInterruptionObservers() {
         NotificationCenter.default.addObserver(
             self,
@@ -566,18 +535,13 @@ final class AudioPlayerManager: ObservableObject {
         DispatchQueue.main.async {
             switch type {
             case .began:
-                self.audioInterruptionActive = true
                 self.isPlaying = false
-                self.isBuffering = false
                 self.updateNowPlayingInfo()
             case .ended:
-                self.audioInterruptionActive = false
                 if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
                     let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
                     if options.contains(.shouldResume) {
                         self.play()
-                    } else {
-                        self.playbackIntent = false
                     }
                 }
             @unknown default:
@@ -593,14 +557,12 @@ final class AudioPlayerManager: ObservableObject {
 
         if reason == .oldDeviceUnavailable {
             DispatchQueue.main.async {
-                self.playbackIntent = false
                 self.isPlaying = false
                 self.updateNowPlayingInfo()
             }
         }
     }
 
-    // MARK: - 控制中心与锁屏控制 (MPRemoteCommandCenter)
     private func setupRemoteCommandCenter() {
         let commandCenter = MPRemoteCommandCenter.shared()
 
@@ -681,17 +643,13 @@ final class AudioPlayerManager: ObservableObject {
         return MPMediaItemArtwork(boundsSize: size) { _ in img }
     }
 
-    // MARK: - 清理全部历史残留沙盒缓存 (保证 0 MB 冗余占用)
     private func clearAllOldDiskCaches() {
         DispatchQueue.global(qos: .utility).async {
             let fileManager = FileManager.default
             let tmp = fileManager.temporaryDirectory
 
-            // 清理旧版 dsp 临时目录及残留文件
             let dspCacheDir = tmp.appendingPathComponent("dsp_audio_cache", isDirectory: true)
             try? fileManager.removeItem(at: dspCacheDir)
-            let downloadedAudioDir = tmp.appendingPathComponent("AudioBoosterAudio", isDirectory: true)
-            try? fileManager.removeItem(at: downloadedAudioDir)
 
             if let files = try? fileManager.contentsOfDirectory(at: tmp, includingPropertiesForKeys: nil) {
                 for f in files {
@@ -705,7 +663,6 @@ final class AudioPlayerManager: ObservableObject {
         }
     }
 
-    // MARK: - 标题清洗
     static func cleanTitle(raw: String) -> String {
         var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if let decoded = s.removingPercentEncoding {
