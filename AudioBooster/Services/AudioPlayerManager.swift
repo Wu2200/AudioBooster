@@ -185,7 +185,6 @@ final class AudioPlayerManager: ObservableObject {
             ]
             let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": headers])
             let item = AVPlayerItem(asset: asset)
-            item.preferredForwardBufferDuration = 10
 
             DispatchQueue.main.async {
                 self.setupPlayerWithItem(item, startTime: 0.0, resumePlay: true)
@@ -222,7 +221,6 @@ final class AudioPlayerManager: ObservableObject {
                     self.isBuffering = false
                     let dur = observedItem.duration.seconds
                     self.duration = (dur.isNaN || dur.isInfinite) ? 0.0 : dur
-                    self.attachAudioTap(to: observedItem)
                     if startTime > 0 {
                         self.seek(to: startTime, resumePlayback: resumePlay)
                     } else if resumePlay {
@@ -424,7 +422,8 @@ final class AudioPlayerManager: ObservableObject {
         currentTime = target
         let targetCMTime = CMTime(seconds: target, preferredTimescale: 600)
 
-        p.seek(to: targetCMTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self, weak p, weak item] finished in
+        let seekTolerance = CMTime(seconds: 0.5, preferredTimescale: 600)
+        p.seek(to: targetCMTime, toleranceBefore: seekTolerance, toleranceAfter: seekTolerance) { [weak self, weak p, weak item] finished in
             DispatchQueue.main.async {
                 guard let self = self,
                       let p = p,
