@@ -216,7 +216,7 @@ final class AudioPlayerManager: ObservableObject {
 
         if player == nil {
             player = AVPlayer(playerItem: item)
-            player?.automaticallyWaitsToMinimizeStalling = true
+            player?.automaticallyWaitsToMinimizeStalling = false
         } else {
             player?.replaceCurrentItem(with: item)
         }
