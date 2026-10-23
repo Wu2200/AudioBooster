@@ -432,7 +432,9 @@ final class AudioPlayerManager: ObservableObject {
         seekGeneration = generation
         item.cancelPendingSeeks()
         pendingPlaybackTarget = shouldResume ? target : nil
-        p.pause()
+        if !shouldResume {
+            p.pause()
+        }
         isPlaying = false
         isBuffering = shouldResume
         currentTime = target
@@ -460,6 +462,9 @@ final class AudioPlayerManager: ObservableObject {
                     self.pendingPlaybackTarget = nil
                     self.isBuffering = false
                     self.isPlaying = false
+                    if shouldResume && self.playbackIntent {
+                        p.play()
+                    }
                     self.errorMessage = "无法跳转到所选位置"
                 }
                 completion?()
