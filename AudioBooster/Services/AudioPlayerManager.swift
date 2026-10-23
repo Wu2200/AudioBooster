@@ -96,6 +96,7 @@ final class AudioPlayerManager: ObservableObject {
     private var pendingPlaybackTarget: Double?
     private var seekGeneration = 0
     private var playbackIntent = false
+    private var audioInterruptionActive = false
     private var endObserver: NSObjectProtocol?
 
     private var sleepTimerCancellable: AnyCancellable?
@@ -218,7 +219,7 @@ final class AudioPlayerManager: ObservableObject {
 
         if player == nil {
             player = AVPlayer(playerItem: item)
-            player?.automaticallyWaitsToMinimizeStalling = false
+            player?.automaticallyWaitsToMinimizeStalling = true
         } else {
             player?.replaceCurrentItem(with: item)
         }
@@ -275,7 +276,7 @@ final class AudioPlayerManager: ObservableObject {
                     self.isBuffering = false
                 case .paused:
                     self.isPlaying = false
-                    self.isBuffering = self.playbackIntent && self.pendingPlaybackTarget != nil
+                    self.isBuffering = self.playbackIntent && !self.audioInterruptionActive
                 case .waitingToPlayAtSpecifiedRate:
                     self.isPlaying = false
                     self.isBuffering = self.playbackIntent
@@ -295,6 +296,15 @@ final class AudioPlayerManager: ObservableObject {
             DispatchQueue.main.async {
                 guard let self = self, self.player?.currentItem === observedItem else { return }
                 self.bufferedTime = buffered
+                guard self.playbackIntent,
+                      !self.audioInterruptionActive,
+                      observedItem.status == .readyToPlay,
+                      let player = self.player,
+                      player.timeControlStatus == .paused else { return }
+                let target = self.pendingPlaybackTarget ?? player.currentTime().seconds
+                if self.isTimeBuffered(target, in: observedItem) {
+                    player.play()
+                }
             }
         }
 
@@ -556,9 +566,12 @@ final class AudioPlayerManager: ObservableObject {
         DispatchQueue.main.async {
             switch type {
             case .began:
+                self.audioInterruptionActive = true
                 self.isPlaying = false
+                self.isBuffering = false
                 self.updateNowPlayingInfo()
             case .ended:
+                self.audioInterruptionActive = false
                 if let optionsValue = userInfo[AVAudioSessionInterruptionOptionKey] as? UInt {
                     let options = AVAudioSession.InterruptionOptions(rawValue: optionsValue)
                     if options.contains(.shouldResume) {
