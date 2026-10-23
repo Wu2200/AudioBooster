@@ -71,7 +71,7 @@ struct ContentView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
-                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .background(selectedTheme.cardColor)
                     .cornerRadius(16)
 
                     HStack {
