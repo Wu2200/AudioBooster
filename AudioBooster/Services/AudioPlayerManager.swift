@@ -32,13 +32,26 @@ enum ASMREffectMode: String, CaseIterable, Identifiable {
     }
 }
 
+final class PlaybackProgress: ObservableObject {
+    @Published var currentTime: Double = 0.0
+    @Published var bufferedTime: Double = 0.0
+}
+
 final class AudioPlayerManager: ObservableObject {
     static let shared = AudioPlayerManager()
 
+    let playbackProgress = PlaybackProgress()
+
     @Published var isPlaying: Bool = false
-    @Published var currentTime: Double = 0.0
+    var currentTime: Double {
+        get { playbackProgress.currentTime }
+        set { playbackProgress.currentTime = newValue }
+    }
     @Published var duration: Double = 0.0
-    @Published var bufferedTime: Double = 0.0
+    var bufferedTime: Double {
+        get { playbackProgress.bufferedTime }
+        set { playbackProgress.bufferedTime = newValue }
+    }
     @Published var currentTitle: String = "未加载音频"
     @Published var currentURLString: String = ""
     @Published var isBuffering: Bool = false
