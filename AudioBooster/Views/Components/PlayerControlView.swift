@@ -2,8 +2,13 @@ import SwiftUI
 
 struct PlayerControlView: View {
     @ObservedObject var playerManager: AudioPlayerManager
+    @AppStorage("selectedBackgroundTheme") private var selectedBackgroundTheme = "cream"
     @State private var isDragging: Bool = false
     @State private var dragProgress: Double? = nil
+
+    private var selectedTheme: SoftColorTheme {
+        SoftColorTheme.option(for: selectedBackgroundTheme)
+    }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -28,17 +33,17 @@ struct PlayerControlView: View {
                     ZStack(alignment: .leading) {
                         // 1. 底层浅灰槽位轨道
                         Capsule()
-                            .fill(Color(UIColor.systemGray5))
+                            .fill(selectedTheme.controlColor)
                             .frame(height: 6)
 
                         // 2. 预载 / 缓冲进度条 (柔和浅灰色，清晰且不突兀)
                         Capsule()
-                            .fill(Color(UIColor.systemGray4))
+                            .fill(selectedTheme.accentColor.opacity(0.28))
                             .frame(width: max(0, width * CGFloat(clampedBuffer)), height: 6)
 
                         // 3. 当前播放进度条 (亮蓝高亮)
                         Capsule()
-                            .fill(Color.blue)
+                            .fill(selectedTheme.accentColor)
                             .frame(width: max(0, width * CGFloat(clampedCurrent)), height: 6)
 
                         // 4. 进度条滑块手柄 (Thumb)
@@ -128,9 +133,9 @@ struct PlayerControlView: View {
                 }) {
                     ZStack {
                         Circle()
-                            .fill(Color.blue)
+                            .fill(selectedTheme.accentColor)
                             .frame(width: 60, height: 60)
-                            .shadow(color: Color.blue.opacity(0.28), radius: 6, x: 0, y: 3)
+                            .shadow(color: selectedTheme.accentColor.opacity(0.28), radius: 6, x: 0, y: 3)
 
                         if playerManager.isBuffering && !playerManager.isPlaying {
                             ProgressView()
@@ -155,7 +160,7 @@ struct PlayerControlView: View {
             }
         }
         .padding(16)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(selectedTheme.cardColor)
         .cornerRadius(16)
     }
 
