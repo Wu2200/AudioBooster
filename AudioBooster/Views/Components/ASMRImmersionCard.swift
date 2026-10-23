@@ -2,6 +2,11 @@ import SwiftUI
 
 struct ASMRImmersionCard: View {
     @ObservedObject var playerManager: AudioPlayerManager
+    @AppStorage("selectedBackgroundTheme") private var selectedBackgroundTheme = "cream"
+
+    private var selectedTheme: SoftColorTheme {
+        SoftColorTheme.option(for: selectedBackgroundTheme)
+    }
 
     let sleepTimerPresets = [0, 15, 30, 45, 60, 90]
 
@@ -42,7 +47,7 @@ struct ASMRImmersionCard: View {
                         .frame(maxWidth: .infinity, minHeight: 56, maxHeight: 56, alignment: .leading)
                         .background(
                             isSelected ?
-                            Color.purple : Color(UIColor.secondarySystemBackground)
+                            selectedTheme.accentColor : selectedTheme.controlColor
                         )
                         .foregroundColor(
                             isSelected ? .white : .primary
@@ -82,7 +87,7 @@ struct ASMRImmersionCard: View {
                         .foregroundColor(.primary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(Color(UIColor.secondarySystemBackground))
+                        .background(selectedTheme.controlColor)
                         .cornerRadius(8)
                     }
                 }
@@ -103,9 +108,9 @@ struct ASMRImmersionCard: View {
                     .padding(.vertical, 6)
                     .background(
                         playerManager.isLooping ?
-                        Color.purple.opacity(0.18) : Color(UIColor.secondarySystemBackground)
+                        selectedTheme.accentColor.opacity(0.18) : selectedTheme.controlColor
                     )
-                    .foregroundColor(playerManager.isLooping ? .purple : .secondary)
+                    .foregroundColor(playerManager.isLooping ? selectedTheme.accentColor : .secondary)
                     .cornerRadius(8)
                 }
             }
@@ -119,7 +124,7 @@ struct ASMRImmersionCard: View {
             }
         }
         .padding(16)
-        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .background(selectedTheme.cardColor)
         .cornerRadius(16)
     }
 
