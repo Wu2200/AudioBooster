@@ -52,6 +52,32 @@ struct ASMRImmersionCard: View {
                 }
             }
 
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label("背景环境音", systemImage: "cloud.rain")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Toggle("雨声", isOn: $playerManager.isRainEnabled)
+                        .labelsHidden()
+                        .toggleStyle(SwitchToggleStyle(tint: .purple))
+                }
+
+                HStack(spacing: 10) {
+                    Image(systemName: "speaker.fill")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Slider(value: $playerManager.rainVolume, in: 0...0.8)
+                        .tint(.purple)
+                        .disabled(!playerManager.isRainEnabled)
+                    Image(systemName: "speaker.wave.3.fill")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(12)
+            .background(Color(UIColor.secondarySystemBackground))
+            .cornerRadius(10)
+
             Divider()
 
             // MARK: - 辅助助眠功能 (睡眠定时器与单曲循环)
