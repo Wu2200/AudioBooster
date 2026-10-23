@@ -19,7 +19,11 @@ private func streamTapPrepare(
     tap: MTAudioProcessingTap,
     maxFrames: CMItemCount,
     processingFormat: UnsafePointer<AudioStreamBasicDescription>
-) {}
+) {
+    let clientInfo = MTAudioProcessingTapGetStorage(tap)
+    let processor = Unmanaged<StreamDSPProcessor>.fromOpaque(clientInfo).takeUnretainedValue()
+    processor.prepare(sampleRate: processingFormat.pointee.mSampleRate)
+}
 
 private func streamTapUnprepare(tap: MTAudioProcessingTap) {}
 
@@ -52,6 +56,10 @@ final class StreamDSPProcessor {
     // MARK: - 1. 呼吸贴耳与综合滤波状态 (IIR 一阶分频与微动态)
     private var breathFilterL: Float = 0.0
     private var breathFilterR: Float = 0.0
+    private var bassFilterL: Float = 0.0
+    private var bassFilterR: Float = 0.0
+    private var bassSplitAlpha: Float = 0.025
+    private var airSplitAlpha: Float = 0.32
     // MARK: - 2. 经典 3D 空间环绕声学混响矩阵 (Schroeder 声学梳状与全通网络)
     // 梳状滤波器缓冲区 (4路不同质数延迟，消除驻波与金属染色)
     private let comb1Cap = 1116 // ~25.3ms
@@ -84,9 +92,17 @@ final class StreamDSPProcessor {
         self.ap2Buf = [Float](repeating: 0.0, count: ap2Cap)
     }
 
+    func prepare(sampleRate: Double) {
+        guard sampleRate.isFinite, sampleRate > 0 else { return }
+        bassSplitAlpha = Float(1.0 - exp(-2.0 * Double.pi * 180.0 / sampleRate))
+        airSplitAlpha = Float(1.0 - exp(-2.0 * Double.pi * 2800.0 / sampleRate))
+    }
+
     func resetStates() {
         breathFilterL = 0.0
         breathFilterR = 0.0
+        bassFilterL = 0.0
+        bassFilterR = 0.0
         comb1Buf.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0.0) }
         comb2Buf.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0.0) }
         comb3Buf.withUnsafeMutableBufferPointer { $0.initialize(repeating: 0.0) }
@@ -169,12 +185,16 @@ final class StreamDSPProcessor {
             return (sL, sR)
 
         case .allInOne:
-            let alpha: Float = 0.32
-            breathFilterL += alpha * (sL - breathFilterL)
-            breathFilterR += alpha * (sR - breathFilterR)
+            bassFilterL += bassSplitAlpha * (sL - bassFilterL)
+            bassFilterR += bassSplitAlpha * (sR - bassFilterR)
+            breathFilterL += airSplitAlpha * (sL - breathFilterL)
+            breathFilterR += airSplitAlpha * (sR - breathFilterR)
             let airL = sL - breathFilterL
             let airR = sR - breathFilterR
-            return (breathFilterL + 1.12 * airL, breathFilterR + 1.12 * airR)
+            return (
+                sL + bassFilterL * 0.0839 + airL * 0.1482,
+                sR + bassFilterR * 0.0839 + airR * 0.1482
+            )
 
         case .whisperBreath:
             // MARK: - 【呼吸贴耳】(强力凸显耳语、喘息起伏与近距唇齿微动态)
