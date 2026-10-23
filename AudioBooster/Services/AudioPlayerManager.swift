@@ -93,7 +93,6 @@ final class AudioPlayerManager: ObservableObject {
     private var statusObserver: NSKeyValueObservation?
     private var timeControlObserver: NSKeyValueObservation?
     private var bufferObserver: NSKeyValueObservation?
-    private var playbackBufferEmptyObserver: NSKeyValueObservation?
     private var pendingPlaybackTarget: Double?
     private var seekGeneration = 0
     private var endObserver: NSObjectProtocol?
@@ -173,7 +172,6 @@ final class AudioPlayerManager: ObservableObject {
             self.statusObserver?.invalidate()
             self.timeControlObserver?.invalidate()
             self.bufferObserver?.invalidate()
-            self.playbackBufferEmptyObserver?.invalidate()
             if let endObserver = self.endObserver {
                 NotificationCenter.default.removeObserver(endObserver)
                 self.endObserver = nil
@@ -210,7 +208,6 @@ final class AudioPlayerManager: ObservableObject {
         removePeriodicTimeObserver()
         seekGeneration += 1
         pendingPlaybackTarget = nil
-        playbackBufferEmptyObserver?.invalidate()
 
         if let endObs = endObserver {
             NotificationCenter.default.removeObserver(endObs)
@@ -219,7 +216,7 @@ final class AudioPlayerManager: ObservableObject {
 
         if player == nil {
             player = AVPlayer(playerItem: item)
-            player?.automaticallyWaitsToMinimizeStalling = false
+            player?.automaticallyWaitsToMinimizeStalling = true
         } else {
             player?.replaceCurrentItem(with: item)
         }
@@ -258,11 +255,6 @@ final class AudioPlayerManager: ObservableObject {
                 guard let self = self else { return }
                 switch observedPlayer.timeControlStatus {
                 case .playing:
-                    guard observedPlayer.currentItem?.isPlaybackBufferEmpty == false else {
-                        self.isPlaying = false
-                        self.isBuffering = true
-                        return
-                    }
                     if self.pendingPlaybackTarget != nil {
                         let actualTime = observedPlayer.currentTime().seconds
                         if actualTime.isFinite {
@@ -294,16 +286,6 @@ final class AudioPlayerManager: ObservableObject {
             DispatchQueue.main.async {
                 guard let self = self, self.player?.currentItem === observedItem else { return }
                 self.bufferedTime = buffered
-            }
-        }
-
-        playbackBufferEmptyObserver = item.observe(\.isPlaybackBufferEmpty, options: [.initial, .new]) { [weak self] observedItem, _ in
-            DispatchQueue.main.async {
-                guard let self = self, self.player?.currentItem === observedItem else { return }
-                if observedItem.isPlaybackBufferEmpty {
-                    self.isPlaying = false
-                    self.isBuffering = true
-                }
             }
         }
 
