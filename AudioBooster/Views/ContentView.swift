@@ -1,11 +1,30 @@
 import SwiftUI
 
+private struct BackgroundColorOption: Identifiable {
+    let id: String
+    let title: String
+    let color: Color
+}
+
+private let backgroundColorOptions = [
+    BackgroundColorOption(id: "cream", title: "奶油白", color: Color(red: 0.98, green: 0.96, blue: 0.92)),
+    BackgroundColorOption(id: "sage", title: "浅鼠尾草", color: Color(red: 0.92, green: 0.96, blue: 0.92)),
+    BackgroundColorOption(id: "blue", title: "雾霾蓝", color: Color(red: 0.91, green: 0.95, blue: 0.98)),
+    BackgroundColorOption(id: "lavender", title: "淡薰衣草", color: Color(red: 0.95, green: 0.93, blue: 0.98)),
+    BackgroundColorOption(id: "peach", title: "柔和蜜桃", color: Color(red: 0.99, green: 0.93, blue: 0.90))
+]
+
 struct ContentView: View {
     @EnvironmentObject var playerManager: AudioPlayerManager
 
+    @AppStorage("selectedBackgroundTheme") private var selectedBackgroundTheme = "cream"
     @State private var inputURL: String = ""
     @State private var recentAudios: [AudioItem] = []
     @State private var showSchemeHelper: Bool = false
+
+    private var appBackgroundColor: Color {
+        backgroundColorOptions.first(where: { $0.id == selectedBackgroundTheme })?.color ?? backgroundColorOptions[0].color
+    }
 
     var body: some View {
         NavigationView {
@@ -41,6 +60,40 @@ struct ContentView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
+                    .background(Color(UIColor.secondarySystemGroupedBackground))
+                    .cornerRadius(16)
+
+                    HStack {
+                        Text("背景色")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+
+                        Spacer(minLength: 8)
+
+                        ForEach(backgroundColorOptions) { option in
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    selectedBackgroundTheme = option.id
+                                }
+                            } label: {
+                                Circle()
+                                    .fill(option.color)
+                                    .frame(width: 26, height: 26)
+                                    .overlay {
+                                        Circle()
+                                            .stroke(
+                                                selectedBackgroundTheme == option.id ? Color.primary.opacity(0.55) : Color.white.opacity(0.9),
+                                                lineWidth: selectedBackgroundTheme == option.id ? 2 : 1
+                                            )
+                                    }
+                                    .frame(width: 34, height: 34)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(option.title)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
                     .background(Color(UIColor.secondarySystemGroupedBackground))
                     .cornerRadius(16)
 
@@ -163,7 +216,8 @@ struct ContentView: View {
                 }
                 .padding()
             }
-            .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
+            .background(appBackgroundColor.ignoresSafeArea())
+            .animation(.easeInOut(duration: 0.2), value: selectedBackgroundTheme)
             .navigationTitle("AudioBooster")
         }
         .navigationViewStyle(StackNavigationViewStyle())
