@@ -129,10 +129,10 @@ final class StreamDSPProcessor {
             process: streamTapProcess
         )
 
-        var tap: Unmanaged<MTAudioProcessingTap>?
+        var tap: MTAudioProcessingTap?
         let err = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PreEffects, &tap)
         if err == noErr, let tap = tap {
-            return tap.takeRetainedValue()
+            return tap
         }
         return nil
     }
